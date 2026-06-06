@@ -49,8 +49,8 @@ export default function RegisterPage() {
 
     try {
       await register({
-        full_name: `${form.firstName} ${form.lastName}`.trim(),
-        team_name: `${form.firstName || "Smart"} Studio`,
+        firstName: form.firstName.trim(),
+        lastName: form.lastName.trim(),
         email: form.email,
         password: form.password,
         timezone: "Asia/Kolkata"
