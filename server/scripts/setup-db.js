@@ -5,20 +5,24 @@ import mysql from 'mysql2/promise';
 
 const database = process.env.DB_NAME || 'smart_social_media';
 
-const connection = await mysql.createConnection({
+const baseConfig = {
   host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT, 10) || 3306,
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '',
   multipleStatements: true,
-});
+};
 
-const schema = `
+const connection = await mysql.createConnection(baseConfig);
+
+const bootstrapSchema = `
 CREATE DATABASE IF NOT EXISTS \`${database}\`
   CHARACTER SET utf8mb4
   COLLATE utf8mb4_unicode_ci;
 USE \`${database}\`;
+`;
 
+const schema = `
 CREATE TABLE IF NOT EXISTS Roles (
   role_id INT AUTO_INCREMENT PRIMARY KEY,
   role_name VARCHAR(32) NOT NULL UNIQUE,
@@ -509,10 +513,38 @@ BEGIN
 END;
 `;
 
+async function runSchema(conn, sql) {
+  await conn.query(sql);
+}
+
 try {
   console.log(`Setting up database ${database}...`);
-  await connection.query(schema);
+  try {
+    await runSchema(connection, `${bootstrapSchema}\n${schema}`);
+  } catch (error) {
+    if (error.code !== 'ER_SPECIFIC_ACCESS_DENIED_ERROR') {
+      throw error;
+    }
+
+    console.warn(`No permission to create database "${database}". Trying existing database instead...`);
+    await connection.end();
+
+    const existingDbConnection = await mysql.createConnection({
+      ...baseConfig,
+      database,
+    });
+
+    try {
+      await runSchema(existingDbConnection, schema);
+    } finally {
+      await existingDbConnection.end();
+    }
+  }
   console.log('Database setup complete.');
 } finally {
-  await connection.end();
+  try {
+    await connection.end();
+  } catch {
+    // connection may already be closed after fallback
+  }
 }
