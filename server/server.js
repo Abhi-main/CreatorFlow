@@ -32,16 +32,34 @@ const app = express();
 const httpServer = createServer(app);
 const PORT = parseInt(process.env.PORT, 10) || 5000;
 
+const configuredOrigins = String(process.env.FRONTEND_URL || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+
 const allowedOrigins = new Set([
-  process.env.FRONTEND_URL,
+  ...configuredOrigins,
   'http://localhost:5173',
   'http://127.0.0.1:5173',
 ].filter(Boolean));
 
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  if (allowedOrigins.has(origin)) return true;
+
+  try {
+    const { hostname, protocol } = new URL(origin);
+    if (protocol !== 'https:') return false;
+    return hostname.endsWith('.vercel.app');
+  } catch {
+    return false;
+  }
+}
+
 export const io = new Server(httpServer, {
   cors: {
     origin(origin, callback) {
-      if (!origin || allowedOrigins.has(origin)) return callback(null, true);
+      if (isAllowedOrigin(origin)) return callback(null, true);
       return callback(new Error('Not allowed by Socket.io CORS'));
     },
     credentials: true,
@@ -53,7 +71,7 @@ initSocket(io);
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || allowedOrigins.has(origin)) return callback(null, true);
+      if (isAllowedOrigin(origin)) return callback(null, true);
       return callback(new Error('Not allowed by CORS'));
     },
     credentials: true,
