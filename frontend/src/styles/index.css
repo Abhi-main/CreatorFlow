@@ -1,0 +1,127 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  font-family: "Manrope", "Segoe UI", system-ui, sans-serif;
+  color: #1f2340;
+  background:
+    radial-gradient(circle at top left, rgba(245, 166, 35, 0.18), transparent 28%),
+    radial-gradient(circle at top right, rgba(124, 77, 255, 0.16), transparent 24%),
+    linear-gradient(180deg, #fff9ef 0%, #f8f5ff 48%, #f4fffb 100%);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::selection {
+  background: rgba(124, 77, 255, 0.14);
+}
+
+.app-surface {
+  @apply rounded-2xl border border-slate-200/80 bg-white;
+  box-shadow: 0 18px 45px rgba(31, 35, 64, 0.08);
+}
+
+.app-input {
+  @apply w-full rounded-2xl border bg-white px-4 py-3 text-slate-700 outline-none transition placeholder:text-slate-400;
+  border-color: #e2e8f0;
+}
+
+.app-input:focus {
+  border-color: #7c4dff;
+  box-shadow: 0 0 0 4px rgba(124, 77, 255, 0.12);
+}
+
+.app-button-primary {
+  @apply inline-flex items-center justify-center rounded-2xl px-4 py-3 font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60;
+  background-color: #f5a623;
+  box-shadow: 0 12px 30px rgba(124, 77, 255, 0.12);
+}
+
+.app-button-secondary {
+  @apply inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3 font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60;
+}
+
+.app-button-success {
+  @apply inline-flex items-center justify-center rounded-2xl px-4 py-3 font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60;
+  background-color: #00c896;
+  box-shadow: 0 12px 30px rgba(124, 77, 255, 0.12);
+}
+
+.page-shell {
+  @apply min-h-screen bg-transparent text-slate-900;
+}
+
+.phone-frame {
+  background: linear-gradient(180deg, #171a2f 0%, #24284c 100%);
+}
+
+.chart-legend {
+  @apply mt-3 flex flex-wrap gap-3 text-xs font-medium text-slate-500;
+}
+
+.react-datepicker {
+  border: 1px solid #e5e7eb !important;
+  border-radius: 1rem !important;
+  box-shadow: 0 14px 40px rgba(31, 35, 64, 0.12) !important;
+}
+
+.react-datepicker__header {
+  background: linear-gradient(135deg, rgba(245, 166, 35, 0.14), rgba(124, 77, 255, 0.12)) !important;
+  border-bottom: 1px solid #e5e7eb !important;
+}
+
+.react-datepicker__day--selected,
+.react-datepicker__day--keyboard-selected,
+.react-datepicker__time-list-item--selected {
+  background: #7c4dff !important;
+  color: #fff !important;
+}
+
+@keyframes modalPop {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes adminTabIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
