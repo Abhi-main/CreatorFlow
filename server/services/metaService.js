@@ -6,6 +6,8 @@ const FB_APP_SECRET = process.env.FACEBOOK_APP_SECRET;
 const FB_REDIRECT_URI = process.env.FACEBOOK_REDIRECT_URI;
 const GRAPH_URL = 'https://graph.facebook.com/v18.0';
 
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export const getFacebookAuthUrl = (state = '') => {
   const scopes = [
     'email',
@@ -92,6 +94,16 @@ export const getInstagramProfile = async (igId, accessToken) => {
   return data;
 };
 
+export const getInstagramContainerStatus = async (containerId, accessToken) => {
+  const { data } = await axios.get(`${GRAPH_URL}/${containerId}`, {
+    params: {
+      fields: 'id,status,status_code',
+      access_token: accessToken,
+    },
+  });
+  return data;
+};
+
 export const publishInstagramPhoto = async ({
   igAccountId, imageUrl, caption, accessToken
 }) => {
@@ -102,13 +114,66 @@ export const publishInstagramPhoto = async ({
       { params: { image_url: imageUrl, caption, access_token: accessToken } }
     );
 
-    const { data: result } = await axios.post(
-      `${GRAPH_URL}/${igAccountId}/media_publish`,
-      null,
-      { params: { creation_id: container.id, access_token: accessToken } }
-    );
+    let containerStatus = null;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await delay(attempt === 0 ? 1500 : 2000);
+      containerStatus = await getInstagramContainerStatus(container.id, accessToken);
+      console.log('Instagram container status:', containerStatus);
 
-    return result;
+      if (containerStatus?.status_code === 'FINISHED') {
+        break;
+      }
+
+      if (containerStatus?.status_code === 'ERROR' || containerStatus?.status === 'ERROR') {
+        const failure = new Error(
+          `Instagram container processing failed${containerStatus?.status ? `: ${containerStatus.status}` : ''}`
+        );
+        failure.status = 400;
+        throw failure;
+      }
+    }
+
+    if (containerStatus?.status_code !== 'FINISHED') {
+      const timeout = new Error(
+        `Instagram media is still processing${containerStatus?.status_code ? ` (${containerStatus.status_code})` : ''}. Please try again in a few seconds.`
+      );
+      timeout.status = 400;
+      throw timeout;
+    }
+
+    let lastPublishError = null;
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (attempt > 0) {
+        await delay(2000);
+      }
+
+      try {
+        const { data: result } = await axios.post(
+          `${GRAPH_URL}/${igAccountId}/media_publish`,
+          null,
+          { params: { creation_id: container.id, access_token: accessToken } }
+        );
+
+        return result;
+      } catch (publishError) {
+        const metaCode = publishError?.response?.data?.error?.code;
+        const metaMessage = publishError?.response?.data?.error?.message;
+
+        if (metaCode === 9007) {
+          lastPublishError = publishError;
+          console.log(
+            `Instagram media_publish retry ${attempt + 1}/5 for container ${container.id}:`,
+            metaMessage || 'Media ID is not available yet'
+          );
+          continue;
+        }
+
+        throw publishError;
+      }
+    }
+
+    throw lastPublishError || new Error('Instagram publish failed');
   } catch (error) {
     const metaMessage = error?.response?.data?.error?.message;
     const metaCode = error?.response?.data?.error?.code;
