@@ -22,7 +22,12 @@ const frontendRedirect = (params = {}) => {
 const absoluteMediaUrl = (req, filePath) => {
   if (!filePath) return null;
   if (/^https?:\/\//i.test(filePath)) return filePath;
-  const base = `${req.protocol}://${req.get('host')}`;
+  const explicitBase = process.env.APP_URL || process.env.BACKEND_PUBLIC_URL;
+  const forwardedProto = req.get('x-forwarded-proto');
+  const protocol = explicitBase
+    ? null
+    : (forwardedProto ? forwardedProto.split(',')[0].trim() : req.protocol);
+  const base = explicitBase || `${protocol}://${req.get('host')}`;
   return new URL(filePath, base).toString();
 };
 

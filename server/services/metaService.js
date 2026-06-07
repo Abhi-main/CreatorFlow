@@ -95,19 +95,28 @@ export const getInstagramProfile = async (igId, accessToken) => {
 export const publishInstagramPhoto = async ({
   igAccountId, imageUrl, caption, accessToken
 }) => {
-  const { data: container } = await axios.post(
-    `${GRAPH_URL}/${igAccountId}/media`,
-    null,
-    { params: { image_url: imageUrl, caption, access_token: accessToken } }
-  );
+  try {
+    const { data: container } = await axios.post(
+      `${GRAPH_URL}/${igAccountId}/media`,
+      null,
+      { params: { image_url: imageUrl, caption, access_token: accessToken } }
+    );
 
-  const { data: result } = await axios.post(
-    `${GRAPH_URL}/${igAccountId}/media_publish`,
-    null,
-    { params: { creation_id: container.id, access_token: accessToken } }
-  );
+    const { data: result } = await axios.post(
+      `${GRAPH_URL}/${igAccountId}/media_publish`,
+      null,
+      { params: { creation_id: container.id, access_token: accessToken } }
+    );
 
-  return result;
+    return result;
+  } catch (error) {
+    const metaMessage = error?.response?.data?.error?.message;
+    const metaCode = error?.response?.data?.error?.code;
+    const detail = metaMessage
+      ? `Instagram publish failed: ${metaMessage}${metaCode ? ` (code ${metaCode})` : ''}`
+      : 'Instagram publish failed';
+    throw new Error(detail);
+  }
 };
 
 export const publishFacebookPost = async ({
