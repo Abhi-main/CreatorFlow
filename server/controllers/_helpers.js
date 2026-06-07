@@ -45,6 +45,35 @@ export const isoRow = (row) => {
   return out;
 };
 
+export const normalizeUtcDateTime = (value) => {
+  if (value === undefined || value === null || value === "") return null;
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(raw)) {
+    return raw;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(raw)) {
+    return `${raw}:00`;
+  }
+
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) {
+    const err = new Error("Invalid datetime value");
+    err.status = 400;
+    throw err;
+  }
+
+  const pad = (num) => String(num).padStart(2, "0");
+  return [
+    parsed.getUTCFullYear(),
+    pad(parsed.getUTCMonth() + 1),
+    pad(parsed.getUTCDate())
+  ].join("-") + ` ${pad(parsed.getUTCHours())}:${pad(parsed.getUTCMinutes())}:${pad(parsed.getUTCSeconds())}`;
+};
+
 export const requireTeam = async (teamId, user) => {
   if (!teamId || Number(teamId) !== Number(user.team_id)) {
     const err = new Error("Team access denied");

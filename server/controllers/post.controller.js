@@ -1,7 +1,7 @@
 import pool from "../config/db.js";
 import { fetchPostAnalytics, publishPost } from "../services/platformSync.js";
 import * as meta from "../services/metaService.js";
-import { asyncController, fail, ok, paged, pageParams } from "./_helpers.js";
+import { asyncController, fail, ok, paged, pageParams, normalizeUtcDateTime } from "./_helpers.js";
 import { emitToTeam } from "../socket/index.js";
 import { EVENTS } from "../socket/events.js";
 
@@ -177,6 +177,7 @@ export const createPost = asyncController(async (req, res) => {
   const caption = req.body.caption;
   const postType = req.body.post_type || req.body.content_type || "feed";
   const status = statusBody(req.body);
+  const normalizedScheduledAt = normalizeUtcDateTime(req.body.scheduled_at || req.body.scheduled_for || null);
   if (!accountId || !caption) return fail(res, "account_id and caption are required", 400);
 
   const [[account]] = await pool.query("SELECT account_id FROM SocialAccounts WHERE account_id = ? AND team_id = ? LIMIT 1", [accountId, req.user.team_id]);
@@ -190,7 +191,7 @@ export const createPost = asyncController(async (req, res) => {
   const [created] = await pool.query(
     `INSERT INTO Posts (team_id, account_id, campaign_id, created_by, caption, post_type, status, scheduled_at, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())`,
-    [req.user.team_id, accountId, req.body.campaign_id || null, req.user.sub || req.user.id, caption, postType, status, req.body.scheduled_at || req.body.scheduled_for || null]
+    [req.user.team_id, accountId, req.body.campaign_id || null, req.user.sub || req.user.id, caption, postType, status, normalizedScheduledAt]
   );
   await replacePostLinks(created.insertId, req.body.media_ids || [], req.body.hashtag_ids || []);
   const newPost = { post_id: created.insertId, id: created.insertId, ...req.body, status };
@@ -201,7 +202,7 @@ export const createPost = asyncController(async (req, res) => {
   if (status === "scheduled") {
     emitToTeam(req.io, req.user.team_id, EVENTS.POST_SCHEDULED, {
       post: newPost,
-      scheduledAt: req.body.scheduled_at || req.body.scheduled_for || null
+      scheduledAt: normalizedScheduledAt
     });
   }
   return ok(res, newPost, "Post created", 201);
@@ -222,12 +223,13 @@ export const updatePost = asyncController(async (req, res) => {
   const post = await getPostOwner(req.params.id, req.user.team_id);
   if (!post) return fail(res, "Post not found", 404);
   if (!["draft", "scheduled"].includes(post.status)) return fail(res, "Only draft or scheduled posts can be updated", 400);
+  const normalizedScheduledAt = normalizeUtcDateTime(req.body.scheduled_at || null);
   await pool.query(
     `UPDATE Posts SET caption = COALESCE(?, caption), post_type = COALESCE(?, post_type),
             campaign_id = COALESCE(?, campaign_id), scheduled_at = COALESCE(?, scheduled_at),
             status = COALESCE(?, status), updated_at = UTC_TIMESTAMP()
       WHERE post_id = ? AND team_id = ?`,
-    [req.body.caption || null, req.body.post_type || null, req.body.campaign_id || null, req.body.scheduled_at || null, req.body.status || null, req.params.id, req.user.team_id]
+    [req.body.caption || null, req.body.post_type || null, req.body.campaign_id || null, normalizedScheduledAt, req.body.status || null, req.params.id, req.user.team_id]
   );
   if (req.body.media_ids || req.body.hashtag_ids) await replacePostLinks(req.params.id, req.body.media_ids || [], req.body.hashtag_ids || []);
   emitToTeam(req.io, req.user.team_id, EVENTS.POST_UPDATED, {
@@ -334,6 +336,7 @@ export const duplicate = asyncController(async (req, res) => {
 export const reschedulePost = asyncController(async (req, res) => {
   const { scheduled_at, timezone } = req.body;
   if (!scheduled_at) return fail(res, "scheduled_at is required", 400);
+  const normalizedScheduledAt = normalizeUtcDateTime(scheduled_at);
 
   const [[post]] = await pool.query("SELECT * FROM Posts WHERE post_id = ? AND team_id = ? LIMIT 1", [req.params.id, req.user.team_id]);
   if (!post) return fail(res, "Post not found", 404);
@@ -351,11 +354,11 @@ export const reschedulePost = asyncController(async (req, res) => {
          scheduled_at = VALUES(scheduled_at),
          timezone = VALUES(timezone),
          status = 'scheduled'`,
-      [req.params.id, scheduled_at, timezone || "UTC"]
+      [req.params.id, normalizedScheduledAt, timezone || "UTC"]
     );
     await conn.query(
       "UPDATE Posts SET status = 'scheduled', scheduled_at = ?, updated_at = UTC_TIMESTAMP() WHERE post_id = ? AND team_id = ?",
-      [scheduled_at, req.params.id, req.user.team_id]
+      [normalizedScheduledAt, req.params.id, req.user.team_id]
     );
     await conn.commit();
   } catch (error) {
@@ -367,8 +370,8 @@ export const reschedulePost = asyncController(async (req, res) => {
 
   emitToTeam(req.io, req.user.team_id, EVENTS.POST_RESCHEDULED, {
     postId: Number(req.params.id),
-    newScheduledAt: scheduled_at
+    newScheduledAt: normalizedScheduledAt
   });
 
-  return ok(res, { post_id: Number(req.params.id), scheduled_at }, "Post rescheduled successfully");
+  return ok(res, { post_id: Number(req.params.id), scheduled_at: normalizedScheduledAt }, "Post rescheduled successfully");
 });
