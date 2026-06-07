@@ -1,5 +1,6 @@
 import pool from "../config/db.js";
 import { fetchPostAnalytics, publishPost } from "../services/platformSync.js";
+import * as meta from "../services/metaService.js";
 import { asyncController, fail, ok, paged, pageParams } from "./_helpers.js";
 import { emitToTeam } from "../socket/index.js";
 import { EVENTS } from "../socket/events.js";
@@ -11,6 +12,13 @@ async function getPostOwner(postId, teamId) {
 
 function statusBody(body) {
   return body.status || body.publish_status || "draft";
+}
+
+function absoluteMediaUrl(req, filePath) {
+  if (!filePath) return null;
+  if (/^https?:\/\//i.test(filePath)) return filePath;
+  const base = `${req.protocol}://${req.get("host")}`;
+  return new URL(filePath, base).toString();
 }
 
 export const listPosts = asyncController(async (req, res) => {
@@ -237,9 +245,50 @@ export const deletePost = asyncController(async (req, res) => {
 });
 
 export const publishNow = asyncController(async (req, res) => {
-  const [[post]] = await pool.query("SELECT * FROM Posts WHERE post_id = ? AND team_id = ? LIMIT 1", [req.params.id, req.user.team_id]);
+  const [[post]] = await pool.query(
+    `SELECT p.*, sa.account_handle, sa.access_token, pf.name AS platform_name
+       FROM Posts p
+       JOIN SocialAccounts sa ON sa.account_id = p.account_id
+       JOIN Platforms pf ON pf.platform_id = sa.platform_id
+      WHERE p.post_id = ? AND p.team_id = ? LIMIT 1`,
+    [req.params.id, req.user.team_id]
+  );
   if (!post) return fail(res, "Post not found", 404);
-  const platformPostId = await publishPost(post);
+
+  const [media] = await pool.query(
+    `SELECT mf.public_url
+       FROM PostMedia pm
+       JOIN MediaFiles mf ON mf.media_id = pm.media_id
+      WHERE pm.post_id = ? ORDER BY pm.sort_order LIMIT 1`,
+    [req.params.id]
+  );
+
+  let platformPostId;
+  const platform = String(post.platform_name || "").toLowerCase();
+
+  if (platform === "facebook") {
+    const result = await meta.publishFacebookPost({
+      pageId: String(post.account_handle).replace("@", ""),
+      message: post.caption,
+      imageUrl: absoluteMediaUrl(req, media[0]?.public_url),
+      accessToken: post.access_token,
+    });
+    platformPostId = result.id || result.post_id;
+  } else if (platform === "instagram") {
+    if (!media.length) {
+      return fail(res, "Instagram requires an image", 400);
+    }
+    const result = await meta.publishInstagramPhoto({
+      igAccountId: String(post.account_handle).replace("@", ""),
+      imageUrl: absoluteMediaUrl(req, media[0]?.public_url),
+      caption: post.caption,
+      accessToken: post.access_token,
+    });
+    platformPostId = result.id;
+  } else {
+    platformPostId = await publishPost(post);
+  }
+
   await pool.query("UPDATE Posts SET status = 'published', platform_post_id = ?, published_at = UTC_TIMESTAMP() WHERE post_id = ?", [platformPostId, req.params.id]);
   const analytics = await fetchPostAnalytics(platformPostId, post.platform_id);
   await pool.query(
