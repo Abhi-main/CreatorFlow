@@ -261,7 +261,7 @@ export const publishNow = asyncController(async (req, res) => {
   if (!post) return fail(res, "Post not found", 404);
 
   const [media] = await pool.query(
-    `SELECT mf.public_url
+    `SELECT mf.public_url, mf.mime_type, mf.original_name, mf.file_name
        FROM PostMedia pm
        JOIN MediaFiles mf ON mf.media_id = pm.media_id
       WHERE pm.post_id = ? ORDER BY pm.sort_order LIMIT 1`,
@@ -283,9 +283,18 @@ export const publishNow = asyncController(async (req, res) => {
     if (!media.length) {
       return fail(res, "Instagram requires an image", 400);
     }
+    const instagramMediaUrl = absoluteMediaUrl(req, media[0]?.public_url);
+    console.log("Instagram publish media:", {
+      postId: post.post_id,
+      accountId: post.account_id,
+      mediaUrl: instagramMediaUrl,
+      mimeType: media[0]?.mime_type,
+      originalName: media[0]?.original_name,
+      fileName: media[0]?.file_name,
+    });
     const result = await meta.publishInstagramPhoto({
       igAccountId: String(post.account_handle).replace("@", ""),
-      imageUrl: absoluteMediaUrl(req, media[0]?.public_url),
+      imageUrl: instagramMediaUrl,
       caption: post.caption,
       accessToken: post.access_token,
     });
