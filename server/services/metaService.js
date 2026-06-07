@@ -10,6 +10,7 @@ export const getFacebookAuthUrl = (state = '') => {
   const scopes = [
     'email',
     'public_profile',
+    'business_management',
     'pages_show_list',
     'pages_read_engagement',
     'pages_manage_posts',
