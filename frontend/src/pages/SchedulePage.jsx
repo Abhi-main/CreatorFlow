@@ -616,7 +616,12 @@ export default function SchedulePage() {
       setUploadedMedia([]);
       setMediaPreview(null);
     } catch (error) {
-      toast.error(error?.message || "Unable to save this post.");
+      toast.error(
+        error?.response?.data?.error
+          || error?.response?.data?.message
+          || error?.message
+          || "Unable to save this post."
+      );
     } finally {
       setSubmitting(false);
     }

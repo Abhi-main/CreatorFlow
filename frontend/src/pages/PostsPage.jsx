@@ -106,9 +106,17 @@ export default function PostsPage() {
                   <button
                     type="button"
                     onClick={async () => {
-                      await postsApi.publishNow(row.id);
-                      await refreshPosts();
-                      toast.success("Post published.");
+                      try {
+                        await postsApi.publishNow(row.id);
+                        await refreshPosts();
+                        toast.success("Post published.");
+                      } catch (error) {
+                        toast.error(
+                          error?.response?.data?.error
+                            || error?.response?.data?.message
+                            || "Unable to publish post."
+                        );
+                      }
                     }}
                     className="inline-flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700"
                   >

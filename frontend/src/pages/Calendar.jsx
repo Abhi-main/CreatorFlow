@@ -200,8 +200,13 @@ export default function Calendar() {
       toast.success("Post published", { id: toastId });
       setSelectedEvent(null);
       fetchEvents();
-    } catch {
-      toast.error("Failed to publish post", { id: toastId });
+    } catch (error) {
+      toast.error(
+        error?.response?.data?.error
+          || error?.response?.data?.message
+          || "Failed to publish post",
+        { id: toastId }
+      );
     }
   };
 

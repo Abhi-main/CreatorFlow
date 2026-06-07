@@ -425,7 +425,11 @@ export default function PostHistory() {
       await refreshPosts();
       toast.success("Post published.", { duration: 3000 });
     } catch (error) {
-      toast.error(error?.response?.data?.message || "Unable to publish post.");
+      toast.error(
+        error?.response?.data?.error
+          || error?.response?.data?.message
+          || "Unable to publish post."
+      );
     } finally {
       setBusy(false);
     }

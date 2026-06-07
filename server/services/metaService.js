@@ -115,7 +115,9 @@ export const publishInstagramPhoto = async ({
     const detail = metaMessage
       ? `Instagram publish failed: ${metaMessage}${metaCode ? ` (code ${metaCode})` : ''}`
       : 'Instagram publish failed';
-    throw new Error(detail);
+    const wrapped = new Error(detail);
+    wrapped.status = error?.response?.status || 500;
+    throw wrapped;
   }
 };
 
