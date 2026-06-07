@@ -71,6 +71,17 @@ export const facebookCallback = async (req, res) => {
     const { access_token: longToken } = await meta.getLongLivedToken(shortToken);
 
     const pages = await meta.getFacebookPages(longToken);
+    console.log(
+      'Meta pages fetched:',
+      pages.map((page) => ({
+        id: page.id,
+        name: page.name,
+        category: page.category,
+        tasks: page.tasks,
+        hasInstagramBusiness: Boolean(page.instagram_business_account),
+        hasConnectedInstagram: Boolean(page.connected_instagram_account),
+      }))
+    );
 
     const [fbPlatforms] = await pool.query(
       "SELECT platform_id FROM Platforms WHERE name = 'Facebook'"
@@ -99,7 +110,9 @@ export const facebookCallback = async (req, res) => {
         connectedCount += 1;
       }
 
-      const igAccount = await meta.getInstagramAccount(page.id, pageToken);
+      const igAccount = page.instagram_business_account
+        || page.connected_instagram_account
+        || await meta.getInstagramAccount(page.id, pageToken);
       if (igAccount && igPlatformId) {
         const igProfile = await meta.getInstagramProfile(igAccount.id, pageToken);
         await meta.saveConnectedAccount({

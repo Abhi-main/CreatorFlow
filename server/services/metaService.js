@@ -63,7 +63,8 @@ export const getFacebookProfile = async (accessToken) => {
 export const getFacebookPages = async (accessToken) => {
   const { data } = await axios.get(`${GRAPH_URL}/me/accounts`, {
     params: {
-      fields: 'id,name,access_token,fan_count',
+      fields: 'id,name,access_token,fan_count,category,tasks,instagram_business_account,connected_instagram_account',
+      limit: 100,
       access_token: accessToken,
     },
   });
