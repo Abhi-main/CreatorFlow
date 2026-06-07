@@ -25,6 +25,7 @@ import campaignRoutes from './routes/campaign.routes.js';
 import hashtagRoutes from './routes/hashtag.routes.js';
 import adminRoutes from './routes/admin.routes.js';
 import notificationRoutes from './routes/notification.routes.js';
+import metaRoutes from './routes/meta.routes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -143,6 +144,7 @@ app.use('/api/campaigns', campaignRoutes);
 app.use('/api/hashtags', hashtagRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/meta', metaRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ success: false, error: 'Route not found', code: 404 });

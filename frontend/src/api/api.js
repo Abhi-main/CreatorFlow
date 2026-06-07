@@ -1,7 +1,18 @@
 import axios from "axios";
 
+function resolveBaseUrl() {
+  const configured = String(import.meta.env.VITE_API_URL || "").trim();
+
+  if (!configured) {
+    return `${window.location.protocol}//${window.location.hostname}:5000/api`;
+  }
+
+  const normalized = configured.replace(/\/+$/, "");
+  return /\/api$/i.test(normalized) ? normalized : `${normalized}/api`;
+}
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:5000/api`,
+  baseURL: resolveBaseUrl(),
   withCredentials: true
 });
 

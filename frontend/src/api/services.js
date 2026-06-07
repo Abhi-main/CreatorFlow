@@ -19,6 +19,7 @@ export const usersApi = {
 export const accountsApi = {
   list: (params = {}) => api.get("/accounts", { params }).then(unwrap),
   create: (payload) => api.post("/accounts", payload).then(unwrap),
+  getMetaConnectUrl: (platform) => api.get("/accounts/meta/connect", { params: { platform } }).then(unwrap),
   remove: (id) => api.delete(`/accounts/${id}`).then(unwrap),
   sync: (id) => api.post(`/accounts/${id}/sync`).then(unwrap)
 };

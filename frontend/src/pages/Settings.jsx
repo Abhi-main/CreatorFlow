@@ -27,6 +27,7 @@ import {
 import api from "../api/api";
 import { accountsApi, mediaApi, teamsApi, usersApi } from "../api/services";
 import ConfirmModal from "../components/ConfirmModal";
+import ConnectMetaButton from "../components/ConnectMetaButton";
 import TabNav from "../components/TabNav";
 import Toggle from "../components/Toggle";
 import { useAuth } from "../context/AuthContext";
@@ -226,6 +227,11 @@ function AccountsTab({ accounts, setAccounts }) {
     return String(handle).startsWith("@") ? handle : `@${handle}`;
   }
 
+  async function fetchAccounts() {
+    const payload = await accountsApi.list({ page: 1, pageSize: 100 });
+    setAccounts(toItems(payload));
+  }
+
   async function sync(account) {
     setBusyId(account.id);
     try {
@@ -244,24 +250,6 @@ function AccountsTab({ accounts, setAccounts }) {
     setAccounts((current) => current.filter((item) => item.id !== disconnectTarget.id));
     setDisconnectTarget(null);
     toast.success("Account disconnected.", { duration: 3000 });
-  }
-
-  async function connect(platform_slug) {
-    setBusyId(platform_slug);
-    try {
-      const created = await accountsApi.create({
-        platform_slug,
-        account_name: `${platform_slug}.creatorflow`,
-        follower_count: 1200,
-        engagement_rate: 4.8
-      });
-      setAccounts((current) => [...current, created]);
-      toast.success(`${created.platform?.name || platform_slug} connected.`, { duration: 3000 });
-    } catch (error) {
-      toast.error(error?.response?.data?.message || "Unable to connect account.");
-    } finally {
-      setBusyId(null);
-    }
   }
 
   return (
@@ -303,21 +291,67 @@ function AccountsTab({ accounts, setAccounts }) {
       </SectionCard>
 
       <SectionCard title="Connect a New Account">
-        <div className="grid gap-4 md:grid-cols-3">
-          {[
-            ["instagram", "Instagram", "Publish reels, stories, and feed posts."],
-            ["facebook", "Facebook", "Manage page publishing and insights."],
-            ["linkedin", "LinkedIn", "Schedule professional company updates."]
-          ].map(([slug, name, description]) => (
-            <div key={slug} className="rounded-2xl border border-slate-200 p-4">
-              <div className="grid h-12 w-12 place-items-center rounded-2xl font-black text-white" style={{ backgroundColor: getPlatformColor(slug) }}>{name[0]}</div>
-              <h3 className="mt-4 font-bold text-slate-950">{name}</h3>
-              <p className="mt-1 text-sm text-slate-500">{description}</p>
-              <button type="button" className="app-button-primary mt-4 w-full py-2.5" onClick={() => connect(slug)} disabled={busyId === slug}>
-                {busyId === slug ? "Connecting..." : "Connect"}
+        <div className="mt-6">
+          <h4 className="text-sm font-bold text-gray-700 mb-3">
+            Connect New Account
+          </h4>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between p-4 border border-gray-200 rounded-xl hover:border-blue-200 hover:bg-blue-50 transition-all">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-[#1877F2] rounded-xl flex items-center justify-center text-xl">📘</div>
+                <div>
+                  <p className="font-semibold text-sm text-gray-800">Facebook</p>
+                  <p className="text-xs text-gray-500">
+                    Connect Pages + linked Instagram accounts
+                  </p>
+                </div>
+              </div>
+              <ConnectMetaButton
+                platform="facebook"
+                onSuccess={async () => {
+                  await fetchAccounts();
+                  toast.success('Facebook connected successfully!');
+                }}
+              />
+            </div>
+
+            <div className="flex items-center justify-between p-4 border border-gray-200 rounded-xl hover:border-pink-200 hover:bg-pink-50 transition-all">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-500 rounded-xl flex items-center justify-center text-xl">
+                  📸
+                </div>
+                <div>
+                  <p className="font-semibold text-sm text-gray-800">Instagram</p>
+                  <p className="text-xs text-gray-500">
+                    Requires Instagram Business account linked to Facebook
+                  </p>
+                </div>
+              </div>
+              <ConnectMetaButton
+                platform="instagram"
+                onSuccess={async () => {
+                  await fetchAccounts();
+                  toast.success('Instagram connected successfully!');
+                }}
+              />
+            </div>
+
+            <div className="flex items-center justify-between p-4 border border-dashed border-gray-200 rounded-xl opacity-60">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-[#0A66C2] rounded-xl flex items-center justify-center text-xl">💼</div>
+                <div>
+                  <p className="font-semibold text-sm text-gray-800">LinkedIn</p>
+                  <p className="text-xs text-gray-500">Coming soon</p>
+                </div>
+              </div>
+              <button
+                disabled
+                className="px-4 py-2 text-xs font-semibold text-gray-400 border border-gray-200 rounded-xl cursor-not-allowed"
+              >
+                Coming Soon
               </button>
             </div>
-          ))}
+          </div>
         </div>
       </SectionCard>
 

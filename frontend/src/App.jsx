@@ -1,5 +1,6 @@
-import { Suspense, lazy } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Suspense, lazy, useEffect } from "react";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import toast from "react-hot-toast";
 import ProtectedRoute from "./components/shared/ProtectedRoute";
 import LoadingSpinner from "./components/shared/LoadingSpinner";
 import { useAuth } from "./context/AuthContext";
@@ -24,7 +25,43 @@ const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
 
 export default function App() {
   const { loading, isAuthenticated } = useAuth();
+  const location = useLocation();
   useSocket();
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const connected = params.get('connected');
+    const count = params.get('count');
+    const error = params.get('error');
+
+    if (connected === 'facebook' && count) {
+      toast.success(`Connected! ${count} account(s) linked successfully.`);
+      if (window.opener && !window.opener.closed) {
+        window.opener.postMessage({ type: 'META_CONNECTED', count }, '*');
+        window.close();
+      }
+    }
+
+    if (error) {
+      const messages = {
+        facebook_denied: 'Facebook connection was cancelled.',
+        facebook_failed: 'Facebook connection failed. Please try again.',
+        invalid_state: 'Session expired. Please try connecting again.',
+      };
+      toast.error(messages[error] || 'Connection failed.');
+      if (window.opener && !window.opener.closed) {
+        window.close();
+      }
+    }
+
+    if (connected || error) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('connected');
+      url.searchParams.delete('count');
+      url.searchParams.delete('error');
+      window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+    }
+  }, [location.search]);
 
   if (loading) {
     return <LoadingSpinner label="Restoring your session..." />;
