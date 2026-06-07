@@ -308,9 +308,14 @@ function AccountsTab({ accounts, setAccounts }) {
               </div>
               <ConnectMetaButton
                 platform="facebook"
-                onSuccess={async () => {
+                onSuccess={async (payload) => {
                   await fetchAccounts();
-                  toast.success('Facebook connected successfully!');
+                  const count = Number(payload?.count || 0);
+                  if (count > 0) {
+                    toast.success(`Facebook connected successfully! ${count} account(s) added.`);
+                  } else {
+                    toast('Facebook login succeeded, but no managed Facebook Pages or linked Instagram business accounts were found.');
+                  }
                 }}
               />
             </div>
@@ -329,9 +334,14 @@ function AccountsTab({ accounts, setAccounts }) {
               </div>
               <ConnectMetaButton
                 platform="instagram"
-                onSuccess={async () => {
+                onSuccess={async (payload) => {
                   await fetchAccounts();
-                  toast.success('Instagram connected successfully!');
+                  const count = Number(payload?.count || 0);
+                  if (count > 0) {
+                    toast.success(`Instagram connected successfully! ${count} account(s) added.`);
+                  } else {
+                    toast('Instagram login succeeded, but no linked professional Instagram account was found.');
+                  }
                 }}
               />
             </div>

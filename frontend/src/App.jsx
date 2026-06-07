@@ -33,11 +33,28 @@ export default function App() {
     const connected = params.get('connected');
     const count = params.get('count');
     const error = params.get('error');
+    const connectedCount = Number(count || 0);
 
     if (connected === 'facebook' && count) {
-      toast.success(`Connected! ${count} account(s) linked successfully.`);
+      if (connectedCount > 0) {
+        toast.success(`Connected! ${connectedCount} account(s) linked successfully.`);
+      } else {
+        toast('Facebook connected, but no Pages or linked Instagram business accounts were found.');
+      }
       if (window.opener && !window.opener.closed) {
-        window.opener.postMessage({ type: 'META_CONNECTED', count }, '*');
+        window.opener.postMessage({ type: 'META_CONNECTED', count: connectedCount, platform: connected }, '*');
+        window.close();
+      }
+    }
+
+    if (connected === 'instagram' && count) {
+      if (connectedCount > 0) {
+        toast.success(`Connected! ${connectedCount} Instagram account(s) linked successfully.`);
+      } else {
+        toast('Instagram login worked, but no linked professional Instagram account was found.');
+      }
+      if (window.opener && !window.opener.closed) {
+        window.opener.postMessage({ type: 'META_CONNECTED', count: connectedCount, platform: connected }, '*');
         window.close();
       }
     }
