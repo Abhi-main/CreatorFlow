@@ -17,7 +17,7 @@ function statusBody(body) {
 function absoluteMediaUrl(req, filePath) {
   if (!filePath) return null;
   if (/^https?:\/\//i.test(filePath)) return filePath;
-  const explicitBase = process.env.APP_URL || process.env.BACKEND_PUBLIC_URL;
+  const explicitBase = process.env.BACKEND_PUBLIC_URL;
   const forwardedProto = req.get("x-forwarded-proto");
   const protocol = explicitBase
     ? null
