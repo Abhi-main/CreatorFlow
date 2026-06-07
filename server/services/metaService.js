@@ -73,11 +73,11 @@ export const getFacebookPages = async (accessToken) => {
 export const getInstagramAccount = async (pageId, pageToken) => {
   const { data } = await axios.get(`${GRAPH_URL}/${pageId}`, {
     params: {
-      fields: 'instagram_business_account',
+      fields: 'instagram_business_account,connected_instagram_account',
       access_token: pageToken,
     },
   });
-  return data.instagram_business_account || null;
+  return data.instagram_business_account || data.connected_instagram_account || null;
 };
 
 export const getInstagramProfile = async (igId, accessToken) => {
