@@ -2,7 +2,7 @@ import pool from "../config/db.js";
 import { fetchPostAnalytics, publishPost } from "../services/platformSync.js";
 import * as meta from "../services/metaService.js";
 import { asyncController, fail, ok, paged, pageParams, normalizeUtcDateTime } from "./_helpers.js";
-import { emitToTeam } from "../socket/index.js";
+import { emitToTeam, emitToUser } from "../socket/index.js";
 import { EVENTS } from "../socket/events.js";
 
 async function getPostOwner(postId, teamId) {
@@ -305,17 +305,132 @@ export const publishNow = asyncController(async (req, res) => {
     platformPostId = await publishPost(post);
   }
 
-  await pool.query("UPDATE Posts SET status = 'published', platform_post_id = ?, published_at = UTC_TIMESTAMP() WHERE post_id = ?", [platformPostId, req.params.id]);
   const analytics = await fetchPostAnalytics(platformPostId, post.platform_id);
-  await pool.query(
-    `INSERT INTO PostAnalytics (post_id, account_id, likes, comments, shares, reach, impressions, clicks, engagement_rate, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())`,
-    [req.params.id, post.account_id, analytics.likes, analytics.comments, analytics.shares, analytics.reach, analytics.impressions, analytics.clicks, analytics.engagementRate]
-  );
+  const conn = await pool.getConnection();
+  const notification = {
+    type: "post_published",
+    title: "Post Published!",
+    body: "Your post has been published successfully.",
+    reference_id: Number(req.params.id),
+    reference_type: "Posts",
+    created_at: new Date().toISOString()
+  };
+
+  try {
+    await conn.beginTransaction();
+
+    if (post.status === "scheduled") {
+      await conn.query("CALL sp_MarkPostPublished(?, ?)", [req.params.id, platformPostId]);
+    } else {
+      await conn.query(
+        `UPDATE Posts
+            SET status = 'published',
+                platform_post_id = ?,
+                published_at = UTC_TIMESTAMP(),
+                updated_at = UTC_TIMESTAMP()
+          WHERE post_id = ?`,
+        [platformPostId, req.params.id]
+      );
+      await conn.query(
+        `UPDATE ScheduledPosts
+            SET status = 'published',
+                last_attempt_at = UTC_TIMESTAMP()
+          WHERE post_id = ?`,
+        [req.params.id]
+      );
+    }
+
+    await conn.query(
+      `INSERT INTO PostAnalytics (post_id, account_id, likes, comments, shares, reach, impressions, clicks, engagement_rate, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())`,
+      [
+        req.params.id,
+        post.account_id,
+        analytics.likes,
+        analytics.comments,
+        analytics.shares,
+        analytics.reach,
+        analytics.impressions,
+        analytics.clicks,
+        analytics.engagementRate
+      ]
+    );
+
+    await conn.query(
+      `INSERT INTO DailyAnalytics
+         (account_id, stat_date, total_posts, total_likes, total_comments, total_shares,
+          total_reach, total_impressions, avg_engagement_rate)
+       VALUES (?, UTC_DATE(), 1, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         total_posts = total_posts + 1,
+         total_likes = total_likes + VALUES(total_likes),
+         total_comments = total_comments + VALUES(total_comments),
+         total_shares = total_shares + VALUES(total_shares),
+         total_reach = total_reach + VALUES(total_reach),
+         total_impressions = total_impressions + VALUES(total_impressions),
+         avg_engagement_rate = VALUES(avg_engagement_rate)`,
+      [
+        post.account_id,
+        analytics.likes,
+        analytics.comments,
+        analytics.shares,
+        analytics.reach,
+        analytics.impressions,
+        analytics.engagementRate
+      ]
+    );
+
+    if (post.campaign_id) {
+      await conn.query(
+        `INSERT INTO CampaignAnalytics
+           (campaign_id, stat_date, reach, engagement, clicks, impressions, engagement_rate)
+         VALUES (?, UTC_DATE(), ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           reach = reach + VALUES(reach),
+           engagement = engagement + VALUES(engagement),
+           clicks = clicks + VALUES(clicks),
+           impressions = impressions + VALUES(impressions),
+           engagement_rate = VALUES(engagement_rate)`,
+        [
+          post.campaign_id,
+          analytics.reach,
+          analytics.likes + analytics.comments + analytics.shares,
+          analytics.clicks,
+          analytics.impressions,
+          analytics.engagementRate
+        ]
+      );
+    }
+
+    await conn.query(
+      `INSERT INTO Notifications
+         (user_id, type, title, body, reference_id, reference_type, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())`,
+      [
+        post.created_by,
+        notification.type,
+        notification.title,
+        notification.body,
+        notification.reference_id,
+        notification.reference_type
+      ]
+    );
+
+    await conn.commit();
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
+
   emitToTeam(req.io, req.user.team_id, EVENTS.POST_PUBLISHED, {
     postId: Number(req.params.id),
     publishedAt: new Date().toISOString(),
     analytics
+  });
+  emitToUser(req.io, post.created_by, EVENTS.NOTIFICATION_NEW, {
+    notification
   });
   return ok(res, { platformPostId }, "Published");
 });

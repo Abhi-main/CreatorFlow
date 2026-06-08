@@ -1,7 +1,9 @@
 /* This page renders campaign cards, creation, and campaign analytics detail. */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { campaignsApi } from "../api/services";
+import { useSocketEvent } from "../hooks/useSocket";
+import { EVENTS } from "../socket/events";
 import { DataTable, PageCard, StatusBadge } from "../components/shared/Ui";
 
 export default function CampaignsPage() {
@@ -10,27 +12,54 @@ export default function CampaignsPage() {
   const [analytics, setAnalytics] = useState(null);
   const [form, setForm] = useState({ name: "", objective: "", budget: "" });
 
-  useEffect(() => {
-    campaignsApi.list().then((response) => {
-      setPayload(response);
-      if (response.items[0]) {
-        setSelectedCampaign(response.items[0]);
+  const refreshCampaignList = useCallback(async () => {
+    const response = await campaignsApi.list();
+    setPayload(response);
+    setSelectedCampaign((current) => {
+      if (!response.items.length) {
+        return null;
       }
+
+      if (!current) {
+        return response.items[0];
+      }
+
+      return response.items.find((campaign) => String(campaign.id) === String(current.id)) || response.items[0];
     });
   }, []);
+
+  const refreshSelectedCampaignAnalytics = useCallback(async () => {
+    if (!selectedCampaign?.id) {
+      return;
+    }
+
+    const campaignAnalytics = await campaignsApi.analytics(selectedCampaign.id);
+    setAnalytics(campaignAnalytics);
+  }, [selectedCampaign]);
+
+  useEffect(() => {
+    refreshCampaignList().catch(() => {});
+  }, [refreshCampaignList]);
 
   useEffect(() => {
     if (!selectedCampaign) {
       return;
     }
-    campaignsApi.analytics(selectedCampaign.id).then(setAnalytics);
-  }, [selectedCampaign]);
+    refreshSelectedCampaignAnalytics().catch(() => {});
+  }, [refreshSelectedCampaignAnalytics, selectedCampaign]);
+
+  useSocketEvent(
+    EVENTS.POST_PUBLISHED,
+    useCallback(() => {
+      refreshCampaignList().catch(() => {});
+      refreshSelectedCampaignAnalytics().catch(() => {});
+    }, [refreshCampaignList, refreshSelectedCampaignAnalytics])
+  );
 
   async function createCampaign(event) {
     event.preventDefault();
     await campaignsApi.create(form);
-    const refreshed = await campaignsApi.list();
-    setPayload(refreshed);
+    await refreshCampaignList();
     setForm({ name: "", objective: "", budget: "" });
   }
 

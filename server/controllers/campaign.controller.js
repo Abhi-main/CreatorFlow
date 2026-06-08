@@ -56,8 +56,39 @@ export const analytics = asyncController(async (req, res) => {
   if (!campaign) return fail(res, "Campaign not found", 404);
   const [daily] = await pool.query("SELECT * FROM CampaignAnalytics WHERE campaign_id = ? ORDER BY stat_date ASC", [req.params.id]);
   const [[summary]] = await pool.query("SELECT * FROM vw_CampaignSummary WHERE campaign_id = ? LIMIT 1", [req.params.id]);
-  const [posts] = await pool.query("SELECT * FROM Posts WHERE campaign_id = ? ORDER BY created_at DESC", [req.params.id]);
-  return ok(res, { summary, daily, posts }, "Campaign analytics fetched");
+  const [posts] = await pool.query(
+    `SELECT p.*,
+            p.status AS publish_status,
+            pa.likes,
+            pa.comments,
+            pa.shares,
+            pa.reach,
+            pa.impressions,
+            pa.clicks,
+            pa.engagement_rate,
+            pa.created_at AS analytics_created_at
+       FROM Posts p
+       LEFT JOIN PostAnalytics pa ON pa.post_id = p.post_id
+      WHERE p.campaign_id = ?
+      ORDER BY p.created_at DESC`,
+    [req.params.id]
+  );
+
+  const normalizedPosts = posts.map((post) => ({
+    ...post,
+    title: post.caption,
+    analytics: {
+      likes_count: Number(post.likes || 0),
+      comments_count: Number(post.comments || 0),
+      shares_count: Number(post.shares || 0),
+      reach_count: Number(post.reach || 0),
+      impressions: Number(post.impressions || 0),
+      clicks: Number(post.clicks || 0),
+      engagement_rate: Number(post.engagement_rate || 0),
+      collected_at: post.analytics_created_at
+    }
+  }));
+  return ok(res, { summary, daily, posts: normalizedPosts }, "Campaign analytics fetched");
 });
 
 export const createCampaign = asyncController(async (req, res) => {

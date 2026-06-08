@@ -41,6 +41,36 @@ export default function DashboardPage() {
   const [isLive, setIsLive] = useState(socket.connected);
   const [followerFlash, setFollowerFlash] = useState(false);
 
+  const normalizeDashboard = useCallback((dashboardPayload) => ({
+    summary: {
+      totalPosts: 0,
+      totalReach: 0,
+      avgEngagementRate: 0,
+      followers: 0,
+      ...(dashboardPayload?.summary || {})
+    },
+    upcomingPosts: dashboardPayload?.upcomingPosts || dashboardPayload?.upcoming_posts || [],
+    recentNotifications: dashboardPayload?.recentNotifications || dashboardPayload?.recent_notifications || []
+  }), []);
+
+  const refreshDashboard = useCallback(async () => {
+    const dashboardPayload = await analyticsApi.dashboard();
+    setDashboard(normalizeDashboard(dashboardPayload));
+  }, [normalizeDashboard]);
+
+  const refreshAccountCharts = useCallback(async (selectedAccountId) => {
+    if (!selectedAccountId) {
+      return;
+    }
+
+    const [followerData, dailyData] = await Promise.all([
+      analyticsApi.followers(selectedAccountId),
+      analyticsApi.daily(selectedAccountId)
+    ]);
+    setFollowers(followerData.slice(-30));
+    setDaily(dailyData.slice(-7));
+  }, []);
+
   useEffect(() => {
     document.title = "Dashboard | Smart Social";
   }, []);
@@ -107,8 +137,9 @@ export default function DashboardPage() {
     EVENTS.POST_PUBLISHED,
     useCallback(() => {
       toast.success("A post just went live.");
-      analyticsApi.dashboard().then(setDashboard).catch(() => {});
-    }, [])
+      refreshDashboard().catch(() => {});
+      refreshAccountCharts(accountId).catch(() => {});
+    }, [accountId, refreshAccountCharts, refreshDashboard])
   );
 
   useSocketEvent(
@@ -122,17 +153,7 @@ export default function DashboardPage() {
     Promise.all([analyticsApi.dashboard(), accountsApi.list()])
       .then(([dashboardPayload, accountsPayload]) => {
         const accountItems = accountsPayload?.items || accountsPayload?.data || (Array.isArray(accountsPayload) ? accountsPayload : []);
-        setDashboard({
-          summary: {
-            totalPosts: 0,
-            totalReach: 0,
-            avgEngagementRate: 0,
-            followers: 0,
-            ...(dashboardPayload?.summary || {})
-          },
-          upcomingPosts: dashboardPayload?.upcomingPosts || dashboardPayload?.upcoming_posts || [],
-          recentNotifications: dashboardPayload?.recentNotifications || dashboardPayload?.recent_notifications || []
-        });
+        setDashboard(normalizeDashboard(dashboardPayload));
         setAccounts(accountItems);
 
         const remembered = localStorage.getItem(ACCOUNT_KEY);
@@ -145,7 +166,7 @@ export default function DashboardPage() {
       .finally(() => {
         setLoading(false);
       });
-  }, []);
+  }, [normalizeDashboard]);
 
   useEffect(() => {
     if (!accountId) {
@@ -153,16 +174,11 @@ export default function DashboardPage() {
     }
 
     localStorage.setItem(ACCOUNT_KEY, accountId);
-
-    Promise.all([analyticsApi.followers(accountId), analyticsApi.daily(accountId)])
-      .then(([followerData, dailyData]) => {
-        setFollowers(followerData.slice(-30));
-        setDaily(dailyData.slice(-7));
-      })
+    refreshAccountCharts(accountId)
       .catch(() => {
         toast.error("Unable to refresh dashboard charts.");
       });
-  }, [accountId]);
+  }, [accountId, refreshAccountCharts]);
 
   const followerChange = useMemo(() => {
     if (followers.length < 2) {

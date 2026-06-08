@@ -1,10 +1,12 @@
 import { BarChart2, CalendarRange, Download } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, Line, LineChart, Pie, PieChart, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import DatePicker from "react-datepicker";
 import toast from "react-hot-toast";
 import { accountsApi, adminApi, analyticsApi } from "../api/services";
 import { useAuth } from "../context/AuthContext";
+import { useSocketEvent } from "../hooks/useSocket";
+import { EVENTS } from "../socket/events";
 import EmptyState from "../components/shared/EmptyState";
 import StatCard from "../components/shared/StatCard";
 import { DataTable, PageCard } from "../components/shared/Ui";
@@ -73,9 +75,58 @@ export default function AnalyticsPage() {
   const [platformBreakdown, setPlatformBreakdown] = useState([]);
   const [selectedPost, setSelectedPost] = useState(null);
 
+  const refreshSelectedAccountAnalytics = useCallback(async () => {
+    if (!selectedAccountId) {
+      return;
+    }
+
+    const rangeStart = startFromPreset(rangePreset, customStart);
+    const rangeEnd = rangePreset === "custom" ? customEnd : new Date();
+    const [dailyPayload, followerPayload, bestTimePayload, postPayload] = await Promise.all([
+      analyticsApi.daily(selectedAccountId, {
+        startDate: toDateOnly(rangeStart),
+        endDate: toDateOnly(rangeEnd)
+      }),
+      analyticsApi.followers(selectedAccountId),
+      analyticsApi.bestTimes(selectedAccountId),
+      analyticsApi.posts(selectedAccountId)
+    ]);
+
+    const dailyItems = Array.isArray(dailyPayload) ? dailyPayload : dailyPayload?.data || dailyPayload?.items || [];
+    const followerItems = Array.isArray(followerPayload) ? followerPayload : followerPayload?.data || followerPayload?.items || [];
+    const bestTimeItems = bestTimePayload?.slots || (Array.isArray(bestTimePayload) ? bestTimePayload : []);
+    const postItems = Array.isArray(postPayload) ? postPayload : postPayload?.data || postPayload?.items || [];
+
+    setDaily(dailyItems);
+    setFollowers(
+      followerItems.filter((item) => {
+        const captured = new Date(item.captured_at);
+        return captured >= rangeStart && captured <= rangeEnd;
+      })
+    );
+    setBestTimes(bestTimeItems);
+    setPosts(
+      postItems.filter((post) => {
+        if (!post.analytics?.collected_at) {
+          return false;
+        }
+
+        const collected = new Date(post.analytics.collected_at);
+        return collected >= rangeStart && collected <= rangeEnd;
+      })
+    );
+  }, [customEnd, customStart, rangePreset, selectedAccountId]);
+
   useEffect(() => {
     document.title = "Analytics | Smart Social";
   }, []);
+
+  useSocketEvent(
+    EVENTS.POST_PUBLISHED,
+    useCallback(() => {
+      refreshSelectedAccountAnalytics().catch(() => {});
+    }, [refreshSelectedAccountAnalytics])
+  );
 
   useEffect(() => {
     accountsApi
@@ -114,51 +165,15 @@ export default function AnalyticsPage() {
 
     localStorage.setItem(ACCOUNT_KEY, selectedAccountId);
 
-    const rangeStart = startFromPreset(rangePreset, customStart);
-    const rangeEnd = rangePreset === "custom" ? customEnd : new Date();
-
     setLoading(true);
-    Promise.all([
-      analyticsApi.daily(selectedAccountId, {
-        startDate: toDateOnly(rangeStart),
-        endDate: toDateOnly(rangeEnd)
-      }),
-      analyticsApi.followers(selectedAccountId),
-      analyticsApi.bestTimes(selectedAccountId),
-      analyticsApi.posts(selectedAccountId)
-    ])
-      .then(([dailyPayload, followerPayload, bestTimePayload, postPayload]) => {
-        const dailyItems = Array.isArray(dailyPayload) ? dailyPayload : dailyPayload?.data || dailyPayload?.items || [];
-        const followerItems = Array.isArray(followerPayload) ? followerPayload : followerPayload?.data || followerPayload?.items || [];
-        const bestTimeItems = bestTimePayload?.slots || (Array.isArray(bestTimePayload) ? bestTimePayload : []);
-        const postItems = Array.isArray(postPayload) ? postPayload : postPayload?.data || postPayload?.items || [];
-
-        setDaily(dailyItems);
-        setFollowers(
-          followerItems.filter((item) => {
-            const captured = new Date(item.captured_at);
-            return captured >= rangeStart && captured <= rangeEnd;
-          })
-        );
-        setBestTimes(bestTimeItems);
-        setPosts(
-          postItems.filter((post) => {
-            if (!post.analytics?.collected_at) {
-              return false;
-            }
-
-            const collected = new Date(post.analytics.collected_at);
-            return collected >= rangeStart && collected <= rangeEnd;
-          })
-        );
-      })
+    refreshSelectedAccountAnalytics()
       .catch(() => {
         toast.error("Unable to load analytics.");
       })
       .finally(() => {
         setLoading(false);
       });
-  }, [selectedAccountId, rangePreset, customStart, customEnd]);
+  }, [selectedAccountId, rangePreset, customStart, customEnd, refreshSelectedAccountAnalytics]);
 
   const stats = useMemo(() => {
     const midpoint = Math.max(1, Math.floor(daily.length / 2));
