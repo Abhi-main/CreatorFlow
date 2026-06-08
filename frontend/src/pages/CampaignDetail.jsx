@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import { useNavigate, useParams } from "react-router-dom";
 import { Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -7,11 +7,13 @@ import { ArrowLeft, BarChart2, Check, Edit3, FileText, Megaphone, MousePointerCl
 import ConfirmModal from "../components/shared/ConfirmModal";
 import { StatCard } from "../components/shared/Ui";
 import { accountsApi, campaignsApi, postsApi } from "../api/services";
+import { useSocketEvent } from "../hooks/useSocket";
+import { EVENTS } from "../socket/events";
 import { formatDate, formatNumber, getPlatformColor, getStatusColor } from "../utils/formatters";
 
 function toItems(payload) {
   if (Array.isArray(payload)) return payload;
-  return payload?.items || [];
+  return payload?.items || payload?.data || [];
 }
 
 function getPostPlatform(post) {
@@ -117,7 +119,7 @@ export default function CampaignDetail() {
     document.title = "Campaign Detail | Smart Social";
   }, []);
 
-  async function loadDetail() {
+  const loadDetail = useCallback(async () => {
     setLoading(true);
     try {
       const [campaignPayload, analyticsPayload, postsPayload, accountsPayload] = await Promise.all([
@@ -137,11 +139,18 @@ export default function CampaignDetail() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [id]);
 
   useEffect(() => {
-    loadDetail();
-  }, [id]);
+    loadDetail().catch(() => {});
+  }, [loadDetail]);
+
+  useSocketEvent(
+    EVENTS.POST_PUBLISHED,
+    useCallback(() => {
+      loadDetail().catch(() => {});
+    }, [loadDetail])
+  );
 
   const campaignPosts = analytics?.posts || allPosts.filter((post) => Number(post.campaign_id) === Number(id));
 

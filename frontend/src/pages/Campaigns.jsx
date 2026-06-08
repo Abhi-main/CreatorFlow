@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -20,11 +20,13 @@ import {
 import ConfirmModal from "../components/shared/ConfirmModal";
 import { StatCard } from "../components/shared/Ui";
 import { campaignsApi } from "../api/services";
+import { useSocketEvent } from "../hooks/useSocket";
+import { EVENTS } from "../socket/events";
 import { formatDate, formatNumber, getStatusColor } from "../utils/formatters";
 
 function toItems(payload) {
   if (Array.isArray(payload)) return payload;
-  return payload?.items || [];
+  return payload?.items || payload?.data || [];
 }
 
 function getCampaignRange(campaign) {
@@ -192,7 +194,7 @@ export default function Campaigns() {
     localStorage.setItem("campaignView", view);
   }, [view]);
 
-  async function loadCampaigns() {
+  const loadCampaigns = useCallback(async () => {
     setLoading(true);
     try {
       const payload = await campaignsApi.list({ page: 1, pageSize: 100 });
@@ -220,11 +222,18 @@ export default function Campaigns() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
-    loadCampaigns();
-  }, []);
+    loadCampaigns().catch(() => {});
+  }, [loadCampaigns]);
+
+  useSocketEvent(
+    EVENTS.POST_PUBLISHED,
+    useCallback(() => {
+      loadCampaigns().catch(() => {});
+    }, [loadCampaigns])
+  );
 
   const stats = useMemo(() => {
     const totalReach = Object.values(analytics).reduce((sum, item) => sum + Number(item.reach || 0), 0);

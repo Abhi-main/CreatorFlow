@@ -31,7 +31,7 @@ const platforms = ["all", "instagram", "facebook", "linkedin"];
 
 function toItems(payload) {
   if (Array.isArray(payload)) return payload;
-  return payload?.items || [];
+  return payload?.items || payload?.data || [];
 }
 
 function getPostPlatform(post) {
@@ -295,6 +295,16 @@ export default function PostHistory() {
     };
   }, []);
 
+  const refreshPosts = useCallback(async () => {
+    const payload = await postsApi.list({ page: 1, pageSize: 500 });
+    const nextPosts = toItems(payload);
+    setPosts(nextPosts);
+    setSelectedPost((current) => {
+      if (!current) return current;
+      return nextPosts.find((post) => String(getPostId(post)) === String(getPostId(current))) || null;
+    });
+  }, []);
+
   const filteredPosts = useMemo(() => {
     return posts.filter((post) => {
       const postStatus = String(post.publish_status || "").toLowerCase();
@@ -334,11 +344,6 @@ export default function PostHistory() {
     setSearchParams(new URLSearchParams({ page: "1", limit: String(limit) }));
   }
 
-  async function refreshPosts() {
-    const payload = await postsApi.list({ page: 1, pageSize: 500 });
-    setPosts(toItems(payload));
-  }
-
   useSocketEvent(
     EVENTS.POST_CREATED,
     useCallback((data) => {
@@ -347,12 +352,8 @@ export default function PostHistory() {
       if (String(createdBy) !== String(user?.user_id || user?.id)) {
         toast("A teammate created a new post.", { icon: "New" });
       }
-      setPosts((current) => {
-        const nextId = getPostId(data.post);
-        if (current.some((post) => String(getPostId(post)) === String(nextId))) return current;
-        return [data.post, ...current];
-      });
-    }, [user?.user_id, user?.id])
+      refreshPosts().catch(() => {});
+    }, [refreshPosts, user?.user_id, user?.id])
   );
 
   useSocketEvent(
@@ -360,10 +361,8 @@ export default function PostHistory() {
     useCallback((data) => {
       const postId = data?.postId || data?.post_id;
       if (!postId) return;
-      setPosts((current) =>
-        current.map((post) => (String(getPostId(post)) === String(postId) ? { ...post, ...(data.changes || {}) } : post))
-      );
-    }, [])
+      refreshPosts().catch(() => {});
+    }, [refreshPosts])
   );
 
   useSocketEvent(
@@ -371,20 +370,8 @@ export default function PostHistory() {
     useCallback((data) => {
       const postId = data?.postId || data?.post_id;
       if (!postId) return;
-      setPosts((current) =>
-        current.map((post) =>
-          String(getPostId(post)) === String(postId)
-            ? {
-                ...post,
-                publish_status: "published",
-                status: "published",
-                published_at: data.publishedAt || data.published_at || new Date().toISOString(),
-                analytics: data.analytics || post.analytics
-              }
-            : post
-        )
-      );
-    }, [])
+      refreshPosts().catch(() => {});
+    }, [refreshPosts])
   );
 
   useSocketEvent(
@@ -392,11 +379,11 @@ export default function PostHistory() {
     useCallback((data) => {
       const postId = data?.postId || data?.post_id;
       if (!postId) return;
-      setPosts((current) => current.filter((post) => String(getPostId(post)) !== String(postId)));
+      refreshPosts().catch(() => {});
       if (String(data.deletedBy || data.deleted_by) !== String(user?.user_id || user?.id)) {
         toast("A post was deleted by a teammate.", { icon: "Deleted" });
       }
-    }, [user?.user_id, user?.id])
+    }, [refreshPosts, user?.user_id, user?.id])
   );
 
   async function handleDuplicate(post) {

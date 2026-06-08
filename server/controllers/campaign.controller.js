@@ -6,6 +6,17 @@ async function findCampaign(id, teamId) {
   return campaign;
 }
 
+function mapCampaign(campaign) {
+  if (!campaign) return null;
+  return {
+    ...campaign,
+    id: campaign.campaign_id,
+    name: campaign.campaign_name || campaign.name,
+    starts_at: campaign.start_date || campaign.starts_at || null,
+    ends_at: campaign.end_date || campaign.ends_at || null,
+  };
+}
+
 export const listCampaigns = asyncController(async (req, res) => {
   const { page, limit, offset } = pageParams(req.query);
   const [[{ total }]] = await pool.query("SELECT COUNT(*) AS total FROM Campaigns WHERE team_id = ? AND status <> 'archived'", [req.user.team_id]);
@@ -23,10 +34,9 @@ export const listCampaigns = asyncController(async (req, res) => {
     [req.user.team_id, limit, offset]
   );
   const items = rows.map((row) => ({
-    ...row,
-    id: row.campaign_id,
-    name: row.campaign_name,
+    ...mapCampaign(row),
     post_count: Number(row.post_count || 0),
+    posts_count: Number(row.post_count || 0),
     total_reach: Number(row.total_reach || 0)
   }));
   return ok(res, { ...paged(items, total, page, limit), items }, "Campaigns fetched");
@@ -48,7 +58,7 @@ export const stats = asyncController(async (req, res) => {
 export const getCampaign = asyncController(async (req, res) => {
   const campaign = await findCampaign(req.params.id, req.user.team_id);
   if (!campaign) return fail(res, "Campaign not found", 404);
-  return ok(res, campaign, "Campaign fetched");
+  return ok(res, mapCampaign(campaign), "Campaign fetched");
 });
 
 export const analytics = asyncController(async (req, res) => {
@@ -68,7 +78,15 @@ export const analytics = asyncController(async (req, res) => {
             pa.engagement_rate,
             pa.created_at AS analytics_created_at
        FROM Posts p
-       LEFT JOIN PostAnalytics pa ON pa.post_id = p.post_id
+       LEFT JOIN (
+         SELECT pa1.*
+           FROM PostAnalytics pa1
+           JOIN (
+             SELECT post_id, MAX(post_analytics_id) AS latest_id
+               FROM PostAnalytics
+              GROUP BY post_id
+           ) latest ON latest.latest_id = pa1.post_analytics_id
+       ) pa ON pa.post_id = p.post_id
       WHERE p.campaign_id = ?
       ORDER BY p.created_at DESC`,
     [req.params.id]
@@ -77,6 +95,7 @@ export const analytics = asyncController(async (req, res) => {
   const normalizedPosts = posts.map((post) => ({
     ...post,
     title: post.caption,
+    scheduled_for: post.scheduled_at || null,
     analytics: {
       likes_count: Number(post.likes || 0),
       comments_count: Number(post.comments || 0),
@@ -84,11 +103,29 @@ export const analytics = asyncController(async (req, res) => {
       reach_count: Number(post.reach || 0),
       impressions: Number(post.impressions || 0),
       clicks: Number(post.clicks || 0),
+      clicks_count: Number(post.clicks || 0),
       engagement_rate: Number(post.engagement_rate || 0),
+      engagement_count: Number(post.likes || 0) + Number(post.comments || 0) + Number(post.shares || 0),
       collected_at: post.analytics_created_at
     }
   }));
-  return ok(res, { summary, daily, posts: normalizedPosts }, "Campaign analytics fetched");
+  const normalizedSummary = summary
+    ? {
+        ...summary,
+        reach_count: Number(summary.total_reach || 0),
+        engagement_count: Number(summary.total_engagement || 0),
+        clicks_count: Number(summary.total_clicks || 0),
+      }
+    : null;
+  const normalizedDaily = daily.map((row) => ({
+    ...row,
+    collected_at: row.stat_date,
+    reach_count: Number(row.reach || 0),
+    engagement_count: Number(row.engagement || 0),
+    clicks_count: Number(row.clicks || 0),
+  }));
+
+  return ok(res, { summary: normalizedSummary, daily: normalizedDaily, posts: normalizedPosts }, "Campaign analytics fetched");
 });
 
 export const createCampaign = asyncController(async (req, res) => {
@@ -99,7 +136,7 @@ export const createCampaign = asyncController(async (req, res) => {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())`,
     [req.user.team_id, req.user.sub || req.user.id, name, req.body.description || "", req.body.start_date || req.body.starts_at, req.body.end_date || req.body.ends_at, req.body.budget || 0, req.body.status || "draft"]
   );
-  return ok(res, { campaign_id: created.insertId, id: created.insertId }, "Campaign created", 201);
+  return ok(res, { campaign_id: created.insertId, id: created.insertId, name, starts_at: req.body.start_date || req.body.starts_at, ends_at: req.body.end_date || req.body.ends_at }, "Campaign created", 201);
 });
 
 export const updateCampaign = asyncController(async (req, res) => {

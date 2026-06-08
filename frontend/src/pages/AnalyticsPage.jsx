@@ -75,6 +75,26 @@ export default function AnalyticsPage() {
   const [platformBreakdown, setPlatformBreakdown] = useState([]);
   const [selectedPost, setSelectedPost] = useState(null);
 
+  const refreshPlatformBreakdown = useCallback(async (accountItems) => {
+    const breakdownPayload = await Promise.all(
+      accountItems.map(async (account) => ({
+        account,
+        posts: await analyticsApi.posts(account.id || account.account_id)
+      }))
+    );
+
+    setPlatformBreakdown(
+      breakdownPayload.map(({ account, posts: accountPosts }) => ({
+        name: account.platform?.name || account.account_name,
+        slug: account.platform?.slug || "instagram",
+        value: (Array.isArray(accountPosts) ? accountPosts : accountPosts?.data || accountPosts?.items || []).reduce(
+          (sum, post) => sum + Number(post.analytics?.reach_count || 0),
+          0
+        )
+      }))
+    );
+  }, []);
+
   const refreshSelectedAccountAnalytics = useCallback(async () => {
     if (!selectedAccountId) {
       return;
@@ -125,7 +145,8 @@ export default function AnalyticsPage() {
     EVENTS.POST_PUBLISHED,
     useCallback(() => {
       refreshSelectedAccountAnalytics().catch(() => {});
-    }, [refreshSelectedAccountAnalytics])
+      refreshPlatformBreakdown(accounts).catch(() => {});
+    }, [accounts, refreshPlatformBreakdown, refreshSelectedAccountAnalytics])
   );
 
   useEffect(() => {
@@ -137,26 +158,12 @@ export default function AnalyticsPage() {
         const remembered = localStorage.getItem(ACCOUNT_KEY);
         const fallback = remembered || String(accountItems[0]?.id || accountItems[0]?.account_id || "");
         setSelectedAccountId(fallback);
-
-        const breakdownPayload = await Promise.all(
-          accountItems.map(async (account) => ({
-            account,
-            posts: await analyticsApi.posts(account.id || account.account_id)
-          }))
-        );
-
-        setPlatformBreakdown(
-          breakdownPayload.map(({ account, posts: accountPosts }) => ({
-            name: account.platform?.name || account.account_name,
-            slug: account.platform?.slug || "instagram",
-            value: (Array.isArray(accountPosts) ? accountPosts : accountPosts?.data || accountPosts?.items || []).reduce((sum, post) => sum + Number(post.analytics?.reach_count || 0), 0)
-          }))
-        );
+        await refreshPlatformBreakdown(accountItems);
       })
       .catch(() => {
         toast.error("Unable to load accounts.");
       });
-  }, []);
+  }, [refreshPlatformBreakdown]);
 
   useEffect(() => {
     if (!selectedAccountId) {
@@ -270,7 +277,7 @@ export default function AnalyticsPage() {
           <div className="grid gap-3 md:grid-cols-[240px_auto]">
             <select className="app-input" value={selectedAccountId} onChange={(event) => setSelectedAccountId(event.target.value)}>
               {accounts.map((account) => (
-                <option key={account.id} value={account.id}>
+                <option key={account.id || account.account_id} value={account.id || account.account_id}>
                   {account.platform?.name} - {account.account_name}
                 </option>
               ))}

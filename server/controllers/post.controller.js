@@ -26,6 +26,44 @@ function absoluteMediaUrl(req, filePath) {
   return new URL(filePath, base).toString();
 }
 
+function mapListPostRow(row) {
+  const platformName = row.platform_name || "Instagram";
+  const analytics = {
+    likes_count: Number(row.likes || 0),
+    comments_count: Number(row.comments || 0),
+    shares_count: Number(row.shares || 0),
+    reach_count: Number(row.reach || 0),
+    impressions: Number(row.impressions || 0),
+    clicks_count: Number(row.clicks || 0),
+    engagement_rate: Number(row.engagement_rate || 0),
+    engagement_count: Number(row.likes || 0) + Number(row.comments || 0) + Number(row.shares || 0),
+    collected_at: row.analytics_created_at || null
+  };
+
+  return {
+    ...row,
+    id: row.post_id,
+    post_id: row.post_id,
+    title: row.caption,
+    publish_status: row.publish_status || row.status,
+    social_account_id: row.account_id,
+    scheduled_for: row.scheduled_for || row.scheduled_at || null,
+    account: {
+      id: row.account_id,
+      account_id: row.account_id,
+      handle: row.account_handle,
+      account_handle: row.account_handle,
+      name: row.account_name,
+      account_name: row.account_name,
+      platform: {
+        name: platformName,
+        slug: String(platformName).toLowerCase(),
+      },
+    },
+    analytics,
+  };
+}
+
 export const listPosts = asyncController(async (req, res) => {
   const { page, limit, offset } = pageParams(req.query);
   const clauses = ["p.team_id = ?"];
@@ -44,18 +82,29 @@ export const listPosts = asyncController(async (req, res) => {
   );
   const [rows] = await pool.query(
     `SELECT p.*, p.post_id AS id, p.status AS publish_status,
+            p.scheduled_at AS scheduled_for,
             sa.account_handle, sa.account_name, pf.name AS platform_name,
-            pa.likes, pa.comments, pa.shares, pa.reach, pa.impressions, pa.engagement_rate
+            pa.likes, pa.comments, pa.shares, pa.reach, pa.impressions, pa.clicks,
+            pa.engagement_rate, pa.created_at AS analytics_created_at
        FROM Posts p
        JOIN SocialAccounts sa ON sa.account_id = p.account_id
        JOIN Platforms pf ON pf.platform_id = sa.platform_id
-       LEFT JOIN PostAnalytics pa ON pa.post_id = p.post_id
+       LEFT JOIN (
+         SELECT pa1.*
+           FROM PostAnalytics pa1
+           JOIN (
+             SELECT post_id, MAX(post_analytics_id) AS latest_id
+               FROM PostAnalytics
+              GROUP BY post_id
+           ) latest ON latest.latest_id = pa1.post_analytics_id
+       ) pa ON pa.post_id = p.post_id
       WHERE ${where}
       ORDER BY p.created_at DESC
       LIMIT ? OFFSET ?`,
     [...params, limit, offset]
   );
-  return ok(res, paged(rows, total, page, limit), "Posts fetched");
+  const items = rows.map(mapListPostRow);
+  return ok(res, { ...paged(items, total, page, limit), items }, "Posts fetched");
 });
 
 export const stats = asyncController(async (req, res) => {

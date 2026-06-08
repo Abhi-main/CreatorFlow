@@ -92,12 +92,34 @@ export const postAnalytics = asyncController(async (req, res) => {
   if (req.query.from) { clauses.push("pa.created_at >= ?"); params.push(req.query.from); }
   if (req.query.to) { clauses.push("pa.created_at <= ?"); params.push(req.query.to); }
   const where = clauses.join(" AND ");
-  const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total FROM PostAnalytics pa JOIN Posts p ON p.post_id = pa.post_id WHERE ${where}`, params);
+  const [[{ total }]] = await pool.query(
+    `SELECT COUNT(*) AS total
+       FROM Posts p
+       LEFT JOIN (
+         SELECT pa1.*
+           FROM PostAnalytics pa1
+           JOIN (
+             SELECT post_id, MAX(post_analytics_id) AS latest_id
+               FROM PostAnalytics
+              GROUP BY post_id
+           ) latest ON latest.latest_id = pa1.post_analytics_id
+       ) pa ON pa.post_id = p.post_id
+      WHERE ${where}`,
+    params
+  );
   const [rows] = await pool.query(
     `SELECT pa.*, p.post_id, p.caption, p.post_type, p.published_at,
             sa.account_name, sa.account_handle, pl.name AS platform_name, pl.icon AS platform_icon
-       FROM PostAnalytics pa
-       JOIN Posts p ON p.post_id = pa.post_id
+       FROM Posts p
+       LEFT JOIN (
+         SELECT pa1.*
+           FROM PostAnalytics pa1
+           JOIN (
+             SELECT post_id, MAX(post_analytics_id) AS latest_id
+               FROM PostAnalytics
+              GROUP BY post_id
+           ) latest ON latest.latest_id = pa1.post_analytics_id
+       ) pa ON pa.post_id = p.post_id
        JOIN SocialAccounts sa ON sa.account_id = p.account_id
        JOIN Platforms pl ON pl.platform_id = sa.platform_id
       WHERE ${where}
@@ -127,7 +149,9 @@ export const postAnalytics = asyncController(async (req, res) => {
       reach_count: Number(row.reach || 0),
       impressions: Number(row.impressions || 0),
       clicks: Number(row.clicks || 0),
+      clicks_count: Number(row.clicks || 0),
       engagement_rate: Number(row.engagement_rate || 0),
+      engagement_count: Number(row.likes || 0) + Number(row.comments || 0) + Number(row.shares || 0),
       collected_at: row.created_at
     }
   }));
