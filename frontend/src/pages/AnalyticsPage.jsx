@@ -302,7 +302,7 @@ export default function AnalyticsPage() {
 
   const engagementOverTime = useMemo(() => {
     const grouped = posts.reduce((acc, post) => {
-      const sourceDate = post.analytics?.collected_at || post.published_at;
+      const sourceDate = post.published_at || post.analytics?.collected_at;
 
       if (!sourceDate) {
         return acc;

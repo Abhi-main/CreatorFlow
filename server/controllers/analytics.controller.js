@@ -1,5 +1,6 @@
 import pool from "../config/db.js";
 import { asyncController, fail, ok, paged, pageParams } from "./_helpers.js";
+import * as meta from "../services/metaService.js";
 
 const dayNames = {
   Mon: "Monday",
@@ -21,6 +22,155 @@ const dayNames = {
 async function verifyAccount(accountId, teamId) {
   const [[account]] = await pool.query("SELECT account_id FROM SocialAccounts WHERE account_id = ? AND team_id = ? LIMIT 1", [accountId, teamId]);
   return Boolean(account);
+}
+
+async function getAccountContext(accountId, teamId) {
+  const [[account]] = await pool.query(
+    `SELECT sa.account_id, sa.account_handle, sa.access_token, sa.follower_count,
+            pl.name AS platform_name
+       FROM SocialAccounts sa
+       JOIN Platforms pl ON pl.platform_id = sa.platform_id
+      WHERE sa.account_id = ? AND sa.team_id = ?
+      LIMIT 1`,
+    [accountId, teamId]
+  );
+  return account || null;
+}
+
+async function refreshMetaPosts(account) {
+  if (!account?.access_token) {
+    return;
+  }
+
+  const platform = String(account.platform_name || "").toLowerCase();
+  if (!["facebook", "instagram"].includes(platform)) {
+    return;
+  }
+
+  const [posts] = await pool.query(
+    `SELECT post_id, platform_post_id
+       FROM Posts
+      WHERE account_id = ?
+        AND status = 'published'
+        AND platform_post_id IS NOT NULL
+        AND platform_post_id NOT LIKE 'mock_%'
+      ORDER BY published_at DESC
+      LIMIT 25`,
+    [account.account_id]
+  );
+
+  for (const post of posts) {
+    let analytics = null;
+
+    try {
+      analytics = platform === "facebook"
+        ? await meta.getFacebookPostAnalytics(post.platform_post_id, account.access_token)
+        : await meta.getInstagramMediaAnalytics(post.platform_post_id, account.access_token);
+    } catch (error) {
+      console.warn(`Meta post analytics refresh failed for post ${post.post_id}:`, error.message);
+      analytics = {
+        likes: 0,
+        comments: 0,
+        shares: 0,
+        reach: 0,
+        impressions: 0,
+        clicks: 0,
+        engagementRate: 0,
+      };
+    }
+
+    await pool.query("DELETE FROM PostAnalytics WHERE post_id = ?", [post.post_id]);
+    await pool.query(
+      `INSERT INTO PostAnalytics
+         (post_id, account_id, likes, comments, shares, reach, impressions, clicks, engagement_rate, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())`,
+      [
+        post.post_id,
+        account.account_id,
+        analytics.likes,
+        analytics.comments,
+        analytics.shares,
+        analytics.reach,
+        analytics.impressions,
+        analytics.clicks,
+        analytics.engagementRate,
+      ]
+    );
+  }
+}
+
+async function refreshMetaAccountDaily(account) {
+  if (!account?.access_token) {
+    return;
+  }
+
+  const platform = String(account.platform_name || "").toLowerCase();
+  if (!["facebook", "instagram"].includes(platform)) {
+    return;
+  }
+
+  const externalId = String(account.account_handle || "").replace("@", "");
+  const previousFollowers = Number(account.follower_count || 0);
+
+  try {
+    let followerCount = previousFollowers;
+    let followerChange = 0;
+    let reach = 0;
+    let impressions = 0;
+    let engagement = 0;
+
+    if (platform === "facebook") {
+      const [profile, insights] = await Promise.all([
+        meta.getFacebookPageProfile(externalId, account.access_token).catch(() => null),
+        meta.getFacebookInsights(externalId, account.access_token),
+      ]);
+      const insightMap = Object.fromEntries((insights || []).map((item) => [item.name, item.values?.[0]?.value ?? 0]));
+      followerCount = Number(profile?.followers_count || profile?.fan_count || previousFollowers || 0);
+      reach = Number(insightMap.page_reach || 0);
+      impressions = Number(insightMap.page_impressions || 0);
+      engagement = Number(insightMap.page_engaged_users || 0);
+      followerChange = Number(insightMap.page_fan_adds || followerCount - previousFollowers || 0);
+    } else {
+      const [profile, insights] = await Promise.all([
+        meta.getInstagramProfile(externalId, account.access_token).catch(() => null),
+        meta.getInstagramInsights(externalId, account.access_token),
+      ]);
+      const insightMap = Object.fromEntries((insights || []).map((item) => [item.name, item.values?.[0]?.value ?? 0]));
+      followerCount = Number(profile?.followers_count || previousFollowers || 0);
+      reach = Number(insightMap.reach || 0);
+      impressions = Number(insightMap.impressions || 0);
+      engagement = Number(insightMap.profile_views || 0);
+      followerChange = followerCount - previousFollowers;
+    }
+
+    const engagementRate = Number(((engagement / Math.max(reach, 1)) * 100).toFixed(2));
+
+    await pool.query(
+      "UPDATE SocialAccounts SET follower_count = ?, last_synced_at = UTC_TIMESTAMP() WHERE account_id = ?",
+      [followerCount, account.account_id]
+    );
+    await pool.query(
+      `INSERT INTO FollowersHistory (account_id, recorded_date, follower_count, net_change)
+       VALUES (?, UTC_DATE(), ?, ?)
+       ON DUPLICATE KEY UPDATE follower_count = VALUES(follower_count), net_change = VALUES(net_change)`,
+      [account.account_id, followerCount, followerChange]
+    );
+    await pool.query(
+      `INSERT INTO DailyAnalytics
+         (account_id, stat_date, total_posts, total_likes, total_comments, total_shares,
+          total_reach, total_impressions, follower_count, follower_change, avg_engagement_rate)
+       VALUES (?, UTC_DATE(), 0, 0, 0, 0, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         total_reach = VALUES(total_reach),
+         total_impressions = VALUES(total_impressions),
+         follower_count = VALUES(follower_count),
+         follower_change = VALUES(follower_change),
+         avg_engagement_rate = VALUES(avg_engagement_rate)`,
+      [account.account_id, reach, impressions, followerCount, followerChange, engagementRate]
+    );
+  } catch (error) {
+    console.warn(`Meta account daily refresh failed for account ${account.account_id}:`, error.message);
+  }
 }
 
 export const dashboard = asyncController(async (req, res) => {
@@ -86,15 +236,24 @@ export const dashboard = asyncController(async (req, res) => {
 
 export const postAnalytics = asyncController(async (req, res) => {
   if (!(await verifyAccount(req.params.accountId, req.user.team_id))) return fail(res, "Account not found", 404);
-  const { page, limit, offset } = pageParams(req.query);
-  const clauses = ["p.account_id = ?"];
+  const account = await getAccountContext(req.params.accountId, req.user.team_id);
+  await refreshMetaPosts(account);
+  const { limit, offset } = pageParams(req.query);
+  const clauses = ["p.account_id = ?", "p.status = 'published'"];
   const params = [req.params.accountId];
+  const platform = String(account?.platform_name || "").toLowerCase();
+
+  if (["facebook", "instagram"].includes(platform)) {
+    clauses.push("p.platform_post_id IS NOT NULL");
+    clauses.push("p.platform_post_id NOT LIKE 'mock_%'");
+  }
+
   if (req.query.from) {
-    clauses.push("pa.created_at >= CONCAT(?, ' 00:00:00')");
+    clauses.push("p.published_at >= CONCAT(?, ' 00:00:00')");
     params.push(req.query.from);
   }
   if (req.query.to) {
-    clauses.push("pa.created_at < DATE_ADD(?, INTERVAL 1 DAY)");
+    clauses.push("p.published_at < DATE_ADD(?, INTERVAL 1 DAY)");
     params.push(req.query.to);
   }
   const where = clauses.join(" AND ");
@@ -209,6 +368,8 @@ export const weekly = asyncController(async (req, res) => {
 
 export const followers = asyncController(async (req, res) => {
   if (!(await verifyAccount(req.params.accountId, req.user.team_id))) return fail(res, "Account not found", 404);
+  const account = await getAccountContext(req.params.accountId, req.user.team_id);
+  await refreshMetaAccountDaily(account);
   const clauses = ["account_id = ?"];
   const params = [req.params.accountId];
   const startDate = req.query.startDate || req.query.from || null;

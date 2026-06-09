@@ -8,6 +8,45 @@ const GRAPH_URL = 'https://graph.facebook.com/v18.0';
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const toNumber = (value) => {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.values(value).reduce((sum, item) => sum + toNumber(item), 0);
+  }
+
+  return 0;
+};
+
+const normalizeInsights = (items = []) =>
+  items.reduce((acc, item) => {
+    const firstValue = Array.isArray(item?.values) ? item.values[0]?.value : item?.value;
+    acc[item.name] = firstValue;
+    return acc;
+  }, {});
+
+const fetchSingleInsightMetric = async (objectId, metric, accessToken) => {
+  try {
+    const { data } = await axios.get(`${GRAPH_URL}/${objectId}/insights`, {
+      params: {
+        metric,
+        access_token: accessToken,
+      },
+    });
+    const item = Array.isArray(data?.data) ? data.data[0] : null;
+    return toNumber(item?.values?.[0]?.value);
+  } catch {
+    return 0;
+  }
+};
+
 export const getFacebookAuthUrl = (state = '') => {
   const scopes = [
     'email',
@@ -72,6 +111,16 @@ export const getFacebookPages = async (accessToken) => {
     },
   });
   return data.data || [];
+};
+
+export const getFacebookPageProfile = async (pageId, accessToken) => {
+  const { data } = await axios.get(`${GRAPH_URL}/${pageId}`, {
+    params: {
+      fields: 'id,name,fan_count,followers_count',
+      access_token: accessToken,
+    },
+  });
+  return data;
 };
 
 export const getInstagramAccount = async (pageId, pageToken) => {
@@ -200,6 +249,40 @@ export const publishFacebookPost = async ({
   return data;
 };
 
+export const getFacebookPostAnalytics = async (postId, accessToken) => {
+  const { data: summary } = await axios.get(`${GRAPH_URL}/${postId}`, {
+    params: {
+      fields: 'id,page_story_id,likes.limit(0).summary(true),comments.limit(0).summary(true)',
+      access_token: accessToken,
+    },
+  });
+
+  const insightTarget = summary?.page_story_id || postId;
+  const [reach, impressions, clicks] = await Promise.all([
+    fetchSingleInsightMetric(insightTarget, 'post_impressions_unique', accessToken),
+    fetchSingleInsightMetric(insightTarget, 'post_impressions', accessToken),
+    fetchSingleInsightMetric(insightTarget, 'post_clicks', accessToken),
+  ]);
+
+  const likes = toNumber(summary?.likes?.summary?.total_count);
+  const comments = toNumber(summary?.comments?.summary?.total_count);
+  const shares = 0;
+  const denominator = reach > 0 ? reach : impressions > 0 ? impressions : 0;
+  const engagementRate = denominator > 0
+    ? Number((((likes + comments + shares) / denominator) * 100).toFixed(2))
+    : 0;
+
+  return {
+    likes,
+    comments,
+    shares,
+    reach,
+    impressions,
+    clicks,
+    engagementRate,
+  };
+};
+
 export const getInstagramInsights = async (igId, accessToken) => {
   try {
     const { data } = await axios.get(`${GRAPH_URL}/${igId}/insights`, {
@@ -213,6 +296,49 @@ export const getInstagramInsights = async (igId, accessToken) => {
   } catch {
     return [];
   }
+};
+
+export const getInstagramMediaAnalytics = async (mediaId, accessToken) => {
+  const [summaryResult, insightsResult] = await Promise.allSettled([
+    axios.get(`${GRAPH_URL}/${mediaId}`, {
+      params: {
+        fields: 'id,like_count,comments_count,media_type,media_product_type',
+        access_token: accessToken,
+      },
+    }),
+    axios.get(`${GRAPH_URL}/${mediaId}/insights`, {
+      params: {
+        metric: 'impressions,reach,saved',
+        access_token: accessToken,
+      },
+    }),
+  ]);
+
+  const summary = summaryResult.status === 'fulfilled' ? summaryResult.value.data : {};
+  const insightData =
+    insightsResult.status === 'fulfilled' ? insightsResult.value.data?.data || [] : [];
+  const insights = normalizeInsights(insightData);
+
+  const likes = toNumber(summary?.like_count);
+  const comments = toNumber(summary?.comments_count);
+  const shares = 0;
+  const reach = toNumber(insights.reach);
+  const impressions = toNumber(insights.impressions);
+  const clicks = 0;
+  const denominator = reach > 0 ? reach : impressions > 0 ? impressions : 0;
+  const engagementRate = denominator > 0
+    ? Number((((likes + comments + shares) / denominator) * 100).toFixed(2))
+    : 0;
+
+  return {
+    likes,
+    comments,
+    shares,
+    reach,
+    impressions,
+    clicks,
+    engagementRate,
+  };
 };
 
 export const getFacebookInsights = async (pageId, accessToken) => {

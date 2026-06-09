@@ -354,7 +354,14 @@ export const publishNow = asyncController(async (req, res) => {
     platformPostId = await publishPost(post);
   }
 
-  const analytics = await fetchPostAnalytics(platformPostId, post.platform_id);
+  let analytics;
+  if (platform === "facebook") {
+    analytics = await meta.getFacebookPostAnalytics(platformPostId, post.access_token);
+  } else if (platform === "instagram") {
+    analytics = await meta.getInstagramMediaAnalytics(platformPostId, post.access_token);
+  } else {
+    analytics = await fetchPostAnalytics(platformPostId, post.platform_id);
+  }
   const conn = await pool.getConnection();
   const notification = {
     type: "post_published",
@@ -388,6 +395,8 @@ export const publishNow = asyncController(async (req, res) => {
         [req.params.id]
       );
     }
+
+    await conn.query("DELETE FROM PostAnalytics WHERE post_id = ?", [req.params.id]);
 
     await conn.query(
       `INSERT INTO PostAnalytics (post_id, account_id, likes, comments, shares, reach, impressions, clicks, engagement_rate, created_at)
