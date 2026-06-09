@@ -131,11 +131,15 @@ function toArray(payload) {
   return payload?.items || payload?.data || [];
 }
 
+function settledValue(result, fallback) {
+  return result.status === "fulfilled" ? result.value : fallback;
+}
+
 export default function AnalyticsPage() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [accounts, setAccounts] = useState([]);
-  const [selectedAccountId, setSelectedAccountId] = useState(localStorage.getItem(ACCOUNT_KEY) || "");
+  const [selectedAccountId, setSelectedAccountId] = useState("");
   const [rangePreset, setRangePreset] = useState(30);
   const [customStart, setCustomStart] = useState(() => {
     const date = new Date();
@@ -187,14 +191,7 @@ export default function AnalyticsPage() {
     const { rangeStart, rangeEnd } = getActiveRange();
     const { previousStart, previousEnd } = previousRange(rangeStart, rangeEnd);
 
-    const [
-      dailyPayload,
-      previousDailyPayload,
-      followerPayload,
-      bestTimePayload,
-      postPayload,
-      previousPostPayload
-    ] = await Promise.all([
+    const results = await Promise.allSettled([
       analyticsApi.daily(selectedAccountId, {
         startDate: toDateOnly(rangeStart),
         endDate: toDateOnly(rangeEnd)
@@ -220,12 +217,28 @@ export default function AnalyticsPage() {
       })
     ]);
 
-    setDaily(toArray(dailyPayload));
-    setComparisonDaily(toArray(previousDailyPayload));
-    setFollowers(toArray(followerPayload));
+    const [
+      dailyResult,
+      previousDailyResult,
+      followerResult,
+      bestTimeResult,
+      postResult,
+      previousPostResult
+    ] = results;
+
+    setDaily(toArray(settledValue(dailyResult, [])));
+    setComparisonDaily(toArray(settledValue(previousDailyResult, [])));
+    setFollowers(toArray(settledValue(followerResult, [])));
+
+    const bestTimePayload = settledValue(bestTimeResult, []);
     setBestTimes(bestTimePayload?.slots || toArray(bestTimePayload));
-    setPosts(toArray(postPayload));
-    setComparisonPosts(toArray(previousPostPayload));
+
+    setPosts(toArray(settledValue(postResult, [])));
+    setComparisonPosts(toArray(settledValue(previousPostResult, [])));
+
+    if (results.every((result) => result.status === "rejected")) {
+      throw dailyResult.reason || new Error("Unable to load analytics.");
+    }
   }, [getActiveRange, selectedAccountId]);
 
   useEffect(() => {
@@ -248,18 +261,40 @@ export default function AnalyticsPage() {
         const accountItems = toArray(payload);
         setAccounts(accountItems);
         const remembered = localStorage.getItem(ACCOUNT_KEY);
-        const fallback = remembered || String(accountItems[0]?.id || accountItems[0]?.account_id || "");
+        const rememberedExists = accountItems.some(
+          (account) => String(account.id || account.account_id) === String(remembered || "")
+        );
+        const fallback = rememberedExists
+          ? String(remembered)
+          : String(accountItems[0]?.id || accountItems[0]?.account_id || "");
         setSelectedAccountId(fallback);
         const { rangeStart, rangeEnd } = getActiveRange();
         await refreshPlatformBreakdown(accountItems, rangeStart, rangeEnd);
+
+        if (!accountItems.length) {
+          setLoading(false);
+        }
       })
       .catch(() => {
         toast.error("Unable to load accounts.");
+        setLoading(false);
       });
   }, [getActiveRange, refreshPlatformBreakdown]);
 
   useEffect(() => {
-    if (!selectedAccountId) {
+    if (!accounts.length || !selectedAccountId) {
+      return;
+    }
+
+    const selectedExists = accounts.some(
+      (account) => String(account.id || account.account_id) === String(selectedAccountId)
+    );
+
+    if (!selectedExists) {
+      const fallback = String(accounts[0]?.id || accounts[0]?.account_id || "");
+      if (fallback && fallback !== selectedAccountId) {
+        setSelectedAccountId(fallback);
+      }
       return;
     }
 
@@ -273,7 +308,7 @@ export default function AnalyticsPage() {
       .finally(() => {
         setLoading(false);
       });
-  }, [customEnd, customStart, rangePreset, refreshSelectedAccountAnalytics, selectedAccountId]);
+  }, [accounts, customEnd, customStart, rangePreset, refreshSelectedAccountAnalytics, selectedAccountId]);
 
   useEffect(() => {
     if (!accounts.length) {
