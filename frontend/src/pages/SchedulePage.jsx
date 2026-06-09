@@ -385,6 +385,13 @@ export default function SchedulePage() {
   }, [availableHashtags, hashtagInput]);
 
   const previewCaption = `${form.caption}${form.hashtags.length ? ` ${form.hashtags.join(" ")}` : ""}`.trim();
+  const hashtagSourceMediaUrl = useMemo(() => {
+    const latestImage = [...uploadedMedia]
+      .reverse()
+      .find((item) => String(item.mime_type || item.type || "").startsWith("image/"));
+
+    return latestImage?.public_url || latestImage?.url || latestImage?.absolute_url || null;
+  }, [uploadedMedia]);
   const editingPostId = searchParams.get("edit") || "new";
 
   const handleCaptionChange = useCallback((event) => {
@@ -771,13 +778,12 @@ export default function SchedulePage() {
                   />
                   <HashtagRecommendations
                     postId={savedPostId}
+                    caption={form.caption}
+                    platform={selectedAccount?.platform?.slug || previewPlatform}
+                    postType={form.postType.toLowerCase()}
+                    mediaUrl={hashtagSourceMediaUrl}
                     onAdd={(tag) => addHashtag(tag)}
                   />
-                  {!savedPostId ? (
-                    <p className="text-xs font-medium text-slate-500">
-                      Save a draft once to unlock post-specific hashtag recommendations.
-                    </p>
-                  ) : null}
                 </div>
               ) : null}
             </section>

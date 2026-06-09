@@ -6,6 +6,7 @@ const router = Router();
 
 router.get("/", verifyToken, ctrl.listHashtags);
 router.get("/stats", verifyToken, ctrl.stats);
+router.post("/ai/from-image", verifyToken, ctrl.generateHashtagsFromImage);
 router.post("/ai/content-ideas", verifyToken, ctrl.generateContentIdeasCtrl);
 router.get("/ai/post-sentiment/:postId", verifyToken, ctrl.analyzePostSentimentCtrl);
 router.get("/ai/campaign-strategy/:campaignId", verifyToken, ctrl.getCampaignStrategyCtrl);

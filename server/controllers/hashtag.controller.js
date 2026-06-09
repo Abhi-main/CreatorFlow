@@ -1,8 +1,11 @@
 import pool from "../config/db.js";
 import {
+  analyzeImageFromUrl,
   analyzeEngagementSentiment,
+  callGroq,
   generateCampaignStrategy,
   generateContentIdeas,
+  parseJSON,
   recommendHashtags,
   suggestCaptions
 } from "../services/aiService.js";
@@ -90,6 +93,51 @@ export const recommendations = asyncController(async (req, res) => {
   }
 
   return ok(res, { hashtags, captions, source: useCache ? "cached" : "ai" }, "Recommendations fetched");
+});
+
+export const generateHashtagsFromImage = asyncController(async (req, res) => {
+  const { caption, platform, postType, mediaUrl } = req.body || {};
+
+  let imageAnalysis = null;
+  if (mediaUrl) {
+    imageAnalysis = await analyzeImageFromUrl(mediaUrl);
+  }
+
+  const prompt = `Recommend 15 highly relevant hashtags for a ${platform || "Instagram"} ${postType || "feed"} post.
+${caption ? `Caption: "${caption}"` : ""}
+${imageAnalysis ? `Image shows: "${imageAnalysis}"` : ""}
+
+Rules:
+- 4 high-reach broad tags (1M+ posts)
+- 6 medium niche tags (100K-1M posts)
+- 5 very specific tags (under 100K posts)
+- All lowercase with # symbol
+- Make them specific to the image content and caption
+- Return ONLY valid JSON, no markdown
+
+Format:
+{
+  "hashtags": [
+    {
+      "tag": "#example",
+      "relevance_score": 0.95,
+      "category": "broad|niche|specific"
+    }
+  ]
+}`;
+
+  const parsed = parseJSON(await callGroq(prompt, 800));
+  const hashtags = Array.isArray(parsed.hashtags)
+    ? parsed.hashtags
+        .map((item) => ({
+          tag: normalizeTag(item.tag || item.suggested_hashtag || ""),
+          relevance_score: Number(item.relevance_score ?? item.score ?? 0),
+          category: item.category || "niche"
+        }))
+        .filter((item) => item.tag)
+    : [];
+
+  res.json({ success: true, data: hashtags, source: "ai" });
 });
 
 export const suggestCaptionsCtrl = asyncController(async (req, res) => {

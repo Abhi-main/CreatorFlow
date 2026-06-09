@@ -38,7 +38,7 @@ const ensureGroqKey = () => {
   }
 };
 
-const callGroq = async (prompt, maxTokens = 800) => {
+export const callGroq = async (prompt, maxTokens = 800) => {
   ensureGroqKey();
 
   const response = await groq.chat.completions.create({
@@ -58,7 +58,7 @@ const callGroq = async (prompt, maxTokens = 800) => {
   return response.choices?.[0]?.message?.content?.trim() || "";
 };
 
-const parseJSON = (text) => {
+export const parseJSON = (text) => {
   const clean = String(text || "")
     .replace(/```json\n?/gi, "")
     .replace(/```\n?/gi, "")
@@ -111,6 +111,48 @@ const resolveLocalUploadPath = (publicUrl) => {
 
   const localPath = path.join(process.cwd(), "uploads", filename);
   return fs.existsSync(localPath) ? localPath : null;
+};
+
+const resolveImageUrlToLocalPath = (imageUrl) => {
+  const normalized = String(imageUrl || "").trim();
+  if (!normalized || normalized.startsWith("blob:")) return null;
+
+  if (fs.existsSync(normalized)) {
+    return normalized;
+  }
+
+  let pathname = normalized;
+  if (/^https?:\/\//i.test(normalized)) {
+    try {
+      pathname = new URL(normalized).pathname;
+    } catch {
+      pathname = normalized;
+    }
+  }
+
+  const uploadFilename = path.basename(pathname || "");
+  if (uploadFilename) {
+    const uploadsPath = path.join(process.cwd(), "uploads", uploadFilename);
+    if (fs.existsSync(uploadsPath)) {
+      return uploadsPath;
+    }
+  }
+
+  if (normalized.startsWith("uploads/")) {
+    const nestedPath = path.join(process.cwd(), normalized);
+    if (fs.existsSync(nestedPath)) {
+      return nestedPath;
+    }
+  }
+
+  if (normalized.startsWith("/uploads/")) {
+    const relativeUploadPath = path.join(process.cwd(), normalized.replace(/^\/+/, ""));
+    if (fs.existsSync(relativeUploadPath)) {
+      return relativeUploadPath;
+    }
+  }
+
+  return resolveLocalUploadPath(normalized);
 };
 
 const getPostImagePath = async (postId) => {
@@ -223,6 +265,62 @@ Be concise, 2-3 sentences max. This will be used for hashtag and caption generat
         return result.response.text().trim();
       } catch (error) {
         console.warn(`Image analysis failed for ${modelName}:`, error.message);
+      }
+    }
+  } catch (error) {
+    console.warn("Image analysis failed:", error.message);
+  }
+
+  return null;
+};
+
+export const analyzeImageFromUrl = async (imageUrl) => {
+  try {
+    if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY === GEMINI_PLACEHOLDER) return null;
+
+    const normalizedUrl = String(imageUrl || "").trim();
+    if (!normalizedUrl || normalizedUrl.startsWith("blob:")) return null;
+
+    let mimeType = mimeFromPath(normalizedUrl);
+    let imageData = null;
+
+    const localPath = resolveImageUrlToLocalPath(normalizedUrl);
+    if (localPath) {
+      mimeType = mimeFromPath(localPath, mimeType);
+      imageData = fs.readFileSync(localPath).toString("base64");
+    } else if (/^https?:\/\//i.test(normalizedUrl)) {
+      const response = await fetch(normalizedUrl);
+      if (!response.ok) {
+        throw new Error(`Unable to fetch image: ${response.status}`);
+      }
+
+      const headerMimeType = response.headers.get("content-type");
+      if (headerMimeType?.startsWith("image/")) {
+        mimeType = headerMimeType;
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      imageData = Buffer.from(arrayBuffer).toString("base64");
+    }
+
+    if (!imageData) return null;
+
+    for (const modelName of GEMINI_VISION_MODELS) {
+      try {
+        const model = genAI.getGenerativeModel({ model: modelName });
+        const result = await model.generateContent([
+          {
+            inlineData: {
+              data: imageData,
+              mimeType
+            }
+          },
+          `Analyze this social media image in 2-3 sentences. Describe the main subject, colors or mood, setting, any visible text, and the overall theme. Be specific for hashtag generation purposes.`
+        ]);
+
+        return result.response.text().trim();
+      } catch (error) {
+        console.warn(`Image URL analysis failed for ${modelName}:`, error.message);
       }
     }
   } catch (error) {
