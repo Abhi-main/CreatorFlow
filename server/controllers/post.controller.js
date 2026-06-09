@@ -93,10 +93,10 @@ export const listPosts = asyncController(async (req, res) => {
          SELECT pa1.*
            FROM PostAnalytics pa1
            JOIN (
-             SELECT post_id, MAX(post_analytics_id) AS latest_id
+             SELECT post_id, MAX(analytics_id) AS latest_id
                FROM PostAnalytics
               GROUP BY post_id
-           ) latest ON latest.latest_id = pa1.post_analytics_id
+           ) latest ON latest.latest_id = pa1.analytics_id
        ) pa ON pa.post_id = p.post_id
       WHERE ${where}
       ORDER BY p.created_at DESC
