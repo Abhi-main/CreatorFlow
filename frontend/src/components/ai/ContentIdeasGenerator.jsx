@@ -52,7 +52,7 @@ export default function ContentIdeasGenerator({ accountId }) {
         </div>
         <div>
           <h3 className="font-bold text-slate-900">AI Content Ideas</h3>
-          <p className="text-xs text-slate-500">Generate OpenAI-powered post ideas instantly.</p>
+          <p className="text-xs text-slate-500">Generate AI-powered post ideas instantly.</p>
         </div>
       </div>
 

@@ -803,8 +803,8 @@ export default function SchedulePage() {
             <section className="rounded-2xl border border-violet-200 bg-violet-50/40 p-4">
               <button type="button" onClick={() => setAiOpen((current) => !current)} className="flex w-full items-center justify-between text-left">
                 <div>
-                  <p className="text-sm font-semibold text-brand-purple">OpenAI Suggestions</p>
-                  <p className="text-sm text-slate-500">Generate captions and hashtag strategy with GPT.</p>
+                  <p className="text-sm font-semibold text-brand-purple">AI Suggestions</p>
+                  <p className="text-sm text-slate-500">Generate captions and hashtag strategy with AI.</p>
                 </div>
                 <ChevronDown className={`h-5 w-5 text-brand-purple transition ${aiOpen ? "rotate-180" : ""}`} />
               </button>
