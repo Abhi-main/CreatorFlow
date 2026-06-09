@@ -174,7 +174,54 @@ async function refreshMetaAccountDaily(account) {
 }
 
 export const dashboard = asyncController(async (req, res) => {
-  const [accounts] = await pool.query("SELECT * FROM vw_AccountDashboard WHERE team_id = ?", [req.user.team_id]);
+  const [metaAccounts] = await pool.query(
+    `SELECT sa.account_id, sa.account_handle, sa.access_token, pl.name AS platform_name
+       FROM SocialAccounts sa
+       JOIN Platforms pl ON pl.platform_id = sa.platform_id
+      WHERE sa.team_id = ?`,
+    [req.user.team_id]
+  );
+
+  await Promise.all(
+    metaAccounts.map((account) => refreshMetaAccountDaily(account))
+  );
+
+  const [accounts] = await pool.query(
+    `SELECT
+        sa.account_id,
+        sa.account_name,
+        sa.account_handle,
+        sa.follower_count AS social_follower_count,
+        sa.last_synced_at,
+        pl.name AS platform_name,
+        pl.icon AS platform_icon,
+        COALESCE(post_counts.total_posts, 0) AS total_posts,
+        COALESCE(latest_daily.total_reach, 0) AS total_reach,
+        COALESCE(latest_daily.total_impressions, 0) AS total_impressions,
+        COALESCE(latest_daily.avg_engagement_rate, 0) AS avg_engagement_rate,
+        COALESCE(latest_daily.follower_count, sa.follower_count, 0) AS follower_count
+       FROM SocialAccounts sa
+       JOIN Platforms pl ON pl.platform_id = sa.platform_id
+       LEFT JOIN (
+         SELECT account_id, COUNT(*) AS total_posts
+           FROM Posts
+          WHERE status = 'published'
+          GROUP BY account_id
+       ) post_counts ON post_counts.account_id = sa.account_id
+       LEFT JOIN (
+         SELECT da1.*
+           FROM DailyAnalytics da1
+           JOIN (
+             SELECT account_id, MAX(stat_date) AS latest_date
+               FROM DailyAnalytics
+              GROUP BY account_id
+           ) latest
+             ON latest.account_id = da1.account_id
+            AND latest.latest_date = da1.stat_date
+       ) latest_daily ON latest_daily.account_id = sa.account_id
+      WHERE sa.team_id = ?`,
+    [req.user.team_id]
+  );
   const summary = accounts.reduce(
     (acc, item) => ({
       totalPosts: acc.totalPosts + Number(item.total_posts || 0),

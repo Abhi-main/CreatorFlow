@@ -18,6 +18,18 @@ import ContentIdeasGenerator from "../components/ai/ContentIdeasGenerator";
 
 const ACCOUNT_KEY = "smart-social-dashboard-account";
 
+function toArray(payload) {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+
+  return payload?.items || payload?.data || [];
+}
+
+function settledValue(result, fallback) {
+  return result.status === "fulfilled" ? result.value : fallback;
+}
+
 function platformIcon(slug) {
   if (slug === "facebook") {
     return <Facebook className="h-5 w-5" />;
@@ -49,6 +61,7 @@ export default function DashboardPage() {
       followers: 0,
       ...(dashboardPayload?.summary || {})
     },
+    accounts: toArray(dashboardPayload?.accounts || []),
     upcomingPosts: dashboardPayload?.upcomingPosts || dashboardPayload?.upcoming_posts || [],
     recentNotifications: dashboardPayload?.recentNotifications || dashboardPayload?.recent_notifications || []
   }), []);
@@ -63,12 +76,23 @@ export default function DashboardPage() {
       return;
     }
 
-    const [followerData, dailyData] = await Promise.all([
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - 29);
+
+    const results = await Promise.allSettled([
       analyticsApi.followers(selectedAccountId),
       analyticsApi.daily(selectedAccountId)
     ]);
-    setFollowers(followerData.slice(-30));
-    setDaily(dailyData.slice(-7));
+
+    const [followerResult, dailyResult] = results;
+
+    setFollowers(toArray(settledValue(followerResult, [])).slice(-30));
+    setDaily(toArray(settledValue(dailyResult, [])).slice(-7));
+
+    if (results.every((result) => result.status === "rejected")) {
+      throw followerResult.reason || new Error("Unable to refresh dashboard charts.");
+    }
   }, []);
 
   useEffect(() => {
@@ -111,6 +135,15 @@ export default function DashboardPage() {
         current
           ? {
               ...current,
+              accounts: (current.accounts || []).map((account) =>
+                String(account.account_id || account.id) === String(data.accountId)
+                  ? {
+                      ...account,
+                      follower_count: data.followerCount,
+                      social_follower_count: data.followerCount
+                    }
+                  : account
+              ),
               summary: {
                 ...(current.summary || {}),
                 followers: data.followerCount,
@@ -150,15 +183,26 @@ export default function DashboardPage() {
   );
 
   useEffect(() => {
-    Promise.all([analyticsApi.dashboard(), accountsApi.list()])
-      .then(([dashboardPayload, accountsPayload]) => {
-        const accountItems = accountsPayload?.items || accountsPayload?.data || (Array.isArray(accountsPayload) ? accountsPayload : []);
+    Promise.allSettled([analyticsApi.dashboard(), accountsApi.list()])
+      .then(([dashboardResult, accountsResult]) => {
+        const dashboardPayload = settledValue(dashboardResult, null);
+        const accountsPayload = settledValue(accountsResult, []);
+        const accountItems = toArray(accountsPayload);
         setDashboard(normalizeDashboard(dashboardPayload));
         setAccounts(accountItems);
 
         const remembered = localStorage.getItem(ACCOUNT_KEY);
-        const fallbackAccountId = remembered || String(accountItems[0]?.id || accountItems[0]?.account_id || "");
+        const rememberedExists = accountItems.some(
+          (account) => String(account.id || account.account_id) === String(remembered || "")
+        );
+        const fallbackAccountId = rememberedExists
+          ? String(remembered)
+          : String(accountItems[0]?.id || accountItems[0]?.account_id || "");
         setAccountId(fallbackAccountId);
+
+        if (dashboardResult.status === "rejected" && accountsResult.status === "rejected") {
+          throw dashboardResult.reason || accountsResult.reason || new Error("Unable to load dashboard.");
+        }
       })
       .catch(() => {
         toast.error("Unable to load dashboard.");
@@ -169,7 +213,19 @@ export default function DashboardPage() {
   }, [normalizeDashboard]);
 
   useEffect(() => {
-    if (!accountId) {
+    if (!accounts.length || !accountId) {
+      return;
+    }
+
+    const selectedExists = accounts.some(
+      (account) => String(account.id || account.account_id) === String(accountId)
+    );
+
+    if (!selectedExists) {
+      const fallback = String(accounts[0]?.id || accounts[0]?.account_id || "");
+      if (fallback && fallback !== accountId) {
+        setAccountId(fallback);
+      }
       return;
     }
 
@@ -178,7 +234,7 @@ export default function DashboardPage() {
       .catch(() => {
         toast.error("Unable to refresh dashboard charts.");
       });
-  }, [accountId, refreshAccountCharts]);
+  }, [accountId, accounts, refreshAccountCharts]);
 
   const followerChange = useMemo(() => {
     if (followers.length < 2) {
@@ -190,6 +246,29 @@ export default function DashboardPage() {
     const diff = first ? ((last - first) / first) * 100 : 0;
     return `${diff >= 0 ? "+" : ""}${diff.toFixed(1)}%`;
   }, [followers]);
+
+  const selectedAccountSummary = useMemo(() => {
+    const selectedDashboardAccount = (dashboard?.accounts || []).find(
+      (account) => String(account.account_id || account.id) === String(accountId)
+    );
+    const latestFollowerCount = followers.length
+      ? Number(followers[followers.length - 1]?.follower_count || 0)
+      : Number(
+          selectedDashboardAccount?.follower_count ||
+            selectedDashboardAccount?.social_follower_count ||
+            dashboard?.summary?.followers ||
+            dashboard?.summary?.followerCount ||
+            0
+        );
+
+    return {
+      totalPosts: Number(selectedDashboardAccount?.total_posts || 0),
+      totalReach: Number(selectedDashboardAccount?.total_reach || selectedDashboardAccount?.total_impressions || 0),
+      avgEngagementRate: Number(selectedDashboardAccount?.avg_engagement_rate || 0),
+      followers: latestFollowerCount,
+      followerCount: latestFollowerCount
+    };
+  }, [accountId, dashboard?.accounts, dashboard?.summary?.followerCount, dashboard?.summary?.followers, followers]);
 
   const engagementMix = useMemo(
     () =>
@@ -255,11 +334,11 @@ export default function DashboardPage() {
       </div>
 
       <section className="grid gap-4 xl:grid-cols-4">
-        <StatCard title="Total Posts" value={dashboard.summary.totalPosts || 0} change="+12.4%" icon={CalendarPlus} color="orange" />
-        <StatCard title="Total Reach" value={Number(dashboard.summary.totalReach || 0).toLocaleString()} change="+9.8%" icon={Instagram} color="purple" />
-        <StatCard title="Avg Engagement Rate" value={`${dashboard.summary.avgEngagementRate || 0}%`} change="+4.1%" icon={Facebook} color="green" />
+        <StatCard title="Total Posts" value={selectedAccountSummary.totalPosts || 0} change="+0.0%" icon={CalendarPlus} color="orange" />
+        <StatCard title="Total Reach" value={Number(selectedAccountSummary.totalReach || 0).toLocaleString()} change="+0.0%" icon={Instagram} color="purple" />
+        <StatCard title="Avg Engagement Rate" value={`${selectedAccountSummary.avgEngagementRate || 0}%`} change="+0.0%" icon={Facebook} color="green" />
         <div className={followerFlash ? "rounded-2xl ring-4 ring-emerald-200 transition" : ""}>
-          <StatCard title="Follower Count" value={Number(dashboard.summary.followers || dashboard.summary.followerCount || 0).toLocaleString()} change={followerChange} icon={Linkedin} color="blue" />
+          <StatCard title="Follower Count" value={Number(selectedAccountSummary.followers || selectedAccountSummary.followerCount || 0).toLocaleString()} change={followerChange} icon={Linkedin} color="blue" />
         </div>
       </section>
 
