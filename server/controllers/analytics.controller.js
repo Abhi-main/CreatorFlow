@@ -89,8 +89,14 @@ export const postAnalytics = asyncController(async (req, res) => {
   const { page, limit, offset } = pageParams(req.query);
   const clauses = ["p.account_id = ?"];
   const params = [req.params.accountId];
-  if (req.query.from) { clauses.push("pa.created_at >= ?"); params.push(req.query.from); }
-  if (req.query.to) { clauses.push("pa.created_at <= ?"); params.push(req.query.to); }
+  if (req.query.from) {
+    clauses.push("pa.created_at >= CONCAT(?, ' 00:00:00')");
+    params.push(req.query.from);
+  }
+  if (req.query.to) {
+    clauses.push("pa.created_at < DATE_ADD(?, INTERVAL 1 DAY)");
+    params.push(req.query.to);
+  }
   const where = clauses.join(" AND ");
   const [[{ total }]] = await pool.query(
     `SELECT COUNT(*) AS total

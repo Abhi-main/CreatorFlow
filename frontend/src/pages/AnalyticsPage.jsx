@@ -91,6 +91,38 @@ function metricValue(item, ...keys) {
   return 0;
 }
 
+function aggregatePostMetrics(items) {
+  return items.reduce(
+    (acc, post) => {
+      const likes = Number(post.analytics?.likes_count || 0);
+      const comments = Number(post.analytics?.comments_count || 0);
+      const shares = Number(post.analytics?.shares_count || 0);
+      const reach = Number(post.analytics?.reach_count || 0);
+      const impressions = Number(post.analytics?.impressions || 0);
+      const engagementRate = Number(post.analytics?.engagement_rate || 0);
+
+      acc.likes += likes;
+      acc.comments += comments;
+      acc.shares += shares;
+      acc.reach += reach;
+      acc.impressions += impressions;
+      acc.engagementRateTotal += engagementRate;
+      acc.count += 1;
+
+      return acc;
+    },
+    {
+      likes: 0,
+      comments: 0,
+      shares: 0,
+      reach: 0,
+      impressions: 0,
+      engagementRateTotal: 0,
+      count: 0
+    }
+  );
+}
+
 function toArray(payload) {
   if (Array.isArray(payload)) {
     return payload;
@@ -253,46 +285,61 @@ export default function AnalyticsPage() {
   }, [accounts, customEnd, customStart, getActiveRange, rangePreset, refreshPlatformBreakdown, selectedAccountId]);
 
   const stats = useMemo(() => {
-    const totalReach = daily.reduce((sum, item) => sum + metricValue(item, "reach_count", "total_reach", "reach"), 0);
-    const previousReach = comparisonDaily.reduce((sum, item) => sum + metricValue(item, "reach_count", "total_reach", "reach"), 0);
-    const totalImpressions = daily.reduce((sum, item) => sum + metricValue(item, "impressions", "total_impressions"), 0);
-    const previousImpressions = comparisonDaily.reduce((sum, item) => sum + metricValue(item, "impressions", "total_impressions"), 0);
-    const totalLikes = daily.reduce((sum, item) => sum + metricValue(item, "likes", "total_likes"), 0);
-    const previousLikes = comparisonDaily.reduce((sum, item) => sum + metricValue(item, "likes", "total_likes"), 0);
-    const totalComments = daily.reduce((sum, item) => sum + metricValue(item, "comments", "total_comments"), 0);
-    const previousComments = comparisonDaily.reduce((sum, item) => sum + metricValue(item, "comments", "total_comments"), 0);
-    const totalShares = daily.reduce((sum, item) => sum + metricValue(item, "shares", "total_shares"), 0);
-    const previousShares = comparisonDaily.reduce((sum, item) => sum + metricValue(item, "shares", "total_shares"), 0);
-    const averageEngagementRate = daily.length
-      ? daily.reduce((sum, item) => sum + metricValue(item, "engagement_rate", "avg_engagement_rate"), 0) / daily.length
-      : posts.length
-        ? posts.reduce((sum, post) => sum + Number(post.analytics?.engagement_rate || 0), 0) / posts.length
-        : 0;
-    const previousEngagementRate = comparisonDaily.length
-      ? comparisonDaily.reduce((sum, item) => sum + metricValue(item, "engagement_rate", "avg_engagement_rate"), 0) / comparisonDaily.length
-      : comparisonPosts.length
-        ? comparisonPosts.reduce((sum, post) => sum + Number(post.analytics?.engagement_rate || 0), 0) / comparisonPosts.length
-        : 0;
+    const currentMetrics = aggregatePostMetrics(posts);
+    const previousMetrics = aggregatePostMetrics(comparisonPosts);
+    const averageEngagementRate = currentMetrics.count ? currentMetrics.engagementRateTotal / currentMetrics.count : 0;
+    const previousEngagementRate = previousMetrics.count ? previousMetrics.engagementRateTotal / previousMetrics.count : 0;
 
     return [
-      { title: "Total Reach", value: totalReach.toLocaleString(), change: percentageChange(totalReach, previousReach), color: "orange" },
-      { title: "Total Impressions", value: totalImpressions.toLocaleString(), change: percentageChange(totalImpressions, previousImpressions), color: "purple" },
-      { title: "Total Likes", value: totalLikes.toLocaleString(), change: percentageChange(totalLikes, previousLikes), color: "green" },
-      { title: "Total Comments", value: totalComments.toLocaleString(), change: percentageChange(totalComments, previousComments), color: "blue" },
-      { title: "Total Shares", value: totalShares.toLocaleString(), change: percentageChange(totalShares, previousShares), color: "orange" },
+      { title: "Total Reach", value: currentMetrics.reach.toLocaleString(), change: percentageChange(currentMetrics.reach, previousMetrics.reach), color: "orange" },
+      { title: "Total Impressions", value: currentMetrics.impressions.toLocaleString(), change: percentageChange(currentMetrics.impressions, previousMetrics.impressions), color: "purple" },
+      { title: "Total Likes", value: currentMetrics.likes.toLocaleString(), change: percentageChange(currentMetrics.likes, previousMetrics.likes), color: "green" },
+      { title: "Total Comments", value: currentMetrics.comments.toLocaleString(), change: percentageChange(currentMetrics.comments, previousMetrics.comments), color: "blue" },
+      { title: "Total Shares", value: currentMetrics.shares.toLocaleString(), change: percentageChange(currentMetrics.shares, previousMetrics.shares), color: "orange" },
       { title: "Avg Engagement Rate", value: `${averageEngagementRate.toFixed(2)}%`, change: percentageChange(averageEngagementRate, previousEngagementRate), color: "purple" }
     ];
-  }, [comparisonDaily, comparisonPosts, daily, posts]);
+  }, [comparisonPosts, posts]);
 
   const engagementOverTime = useMemo(() => {
-    return daily.map((item) => ({
-      day: formatDayKey(new Date(item.analytics_date || item.stat_date), user?.timezone),
-      likes: metricValue(item, "likes", "total_likes"),
-      comments: metricValue(item, "comments", "total_comments"),
-      shares: metricValue(item, "shares", "total_shares"),
-      reach: metricValue(item, "reach_count", "total_reach", "reach")
-    }));
-  }, [daily, user?.timezone]);
+    const grouped = posts.reduce((acc, post) => {
+      const sourceDate = post.analytics?.collected_at || post.published_at;
+
+      if (!sourceDate) {
+        return acc;
+      }
+
+      const date = new Date(sourceDate);
+      const key = toDateOnly(date);
+
+      if (!acc[key]) {
+        acc[key] = {
+          key,
+          date,
+          likes: 0,
+          comments: 0,
+          shares: 0,
+          reach: 0
+        };
+      }
+
+      acc[key].likes += Number(post.analytics?.likes_count || 0);
+      acc[key].comments += Number(post.analytics?.comments_count || 0);
+      acc[key].shares += Number(post.analytics?.shares_count || 0);
+      acc[key].reach += Number(post.analytics?.reach_count || 0);
+
+      return acc;
+    }, {});
+
+    return Object.values(grouped)
+      .sort((left, right) => new Date(left.date) - new Date(right.date))
+      .map((item) => ({
+        day: formatDayKey(new Date(item.date), user?.timezone),
+        likes: item.likes,
+        comments: item.comments,
+        shares: item.shares,
+        reach: item.reach
+      }));
+  }, [posts, user?.timezone]);
 
   const heatmapCells = useMemo(() => {
     const slotsByDay = bestTimes.reduce((acc, item) => {
