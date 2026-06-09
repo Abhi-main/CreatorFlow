@@ -1,16 +1,30 @@
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { BarChart2, CalendarRange, Download } from "lucide-react";
-import { Area, AreaChart, CartesianGrid, Line, LineChart, Pie, PieChart, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { useCallback, useEffect, useMemo, useState } from "react";
 import DatePicker from "react-datepicker";
 import toast from "react-hot-toast";
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  Cell,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis
+} from "recharts";
 import { accountsApi, adminApi, analyticsApi } from "../api/services";
-import { useAuth } from "../context/AuthContext";
-import { useSocketEvent } from "../hooks/useSocket";
-import { EVENTS } from "../socket/events";
+import PostSentimentAnalysis from "../components/ai/PostSentimentAnalysis";
 import EmptyState from "../components/shared/EmptyState";
 import StatCard from "../components/shared/StatCard";
 import { DataTable, PageCard } from "../components/shared/Ui";
-import PostSentimentAnalysis from "../components/ai/PostSentimentAnalysis";
+import { useAuth } from "../context/AuthContext";
+import { useSocketEvent } from "../hooks/useSocket";
+import { EVENTS } from "../socket/events";
 
 const ACCOUNT_KEY = "smart-social-analytics-account";
 const presets = [7, 14, 30, 90, "custom"];
@@ -31,12 +45,23 @@ function startFromPreset(preset, customStart) {
   return date;
 }
 
+function endOfDay(date) {
+  const value = new Date(date);
+  value.setHours(23, 59, 59, 999);
+  return value;
+}
+
 function toDateOnly(date) {
   return date.toISOString().slice(0, 10);
 }
 
-function sumBy(items, key) {
-  return items.reduce((total, item) => total + Number(item[key] || 0), 0);
+function previousRange(start, end) {
+  const currentStart = new Date(start);
+  const currentEnd = endOfDay(end);
+  const durationMs = currentEnd.getTime() - currentStart.getTime() + 1;
+  const previousEnd = new Date(currentStart.getTime() - 1);
+  const previousStart = new Date(previousEnd.getTime() - durationMs + 1);
+  return { previousStart, previousEnd };
 }
 
 function percentageChange(current, previous) {
@@ -56,6 +81,24 @@ function formatDayKey(date, timezone) {
   }).format(date);
 }
 
+function metricValue(item, ...keys) {
+  for (const key of keys) {
+    if (item?.[key] !== undefined && item?.[key] !== null) {
+      return Number(item[key] || 0);
+    }
+  }
+
+  return 0;
+}
+
+function toArray(payload) {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+
+  return payload?.items || payload?.data || [];
+}
+
 export default function AnalyticsPage() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
@@ -69,17 +112,29 @@ export default function AnalyticsPage() {
   });
   const [customEnd, setCustomEnd] = useState(new Date());
   const [daily, setDaily] = useState([]);
+  const [comparisonDaily, setComparisonDaily] = useState([]);
   const [followers, setFollowers] = useState([]);
   const [bestTimes, setBestTimes] = useState([]);
   const [posts, setPosts] = useState([]);
+  const [comparisonPosts, setComparisonPosts] = useState([]);
   const [platformBreakdown, setPlatformBreakdown] = useState([]);
   const [selectedPost, setSelectedPost] = useState(null);
 
-  const refreshPlatformBreakdown = useCallback(async (accountItems) => {
+  const getActiveRange = useCallback(() => {
+    const rangeStart = startFromPreset(rangePreset, customStart);
+    const rangeEnd = rangePreset === "custom" ? customEnd : new Date();
+    return { rangeStart, rangeEnd };
+  }, [customEnd, customStart, rangePreset]);
+
+  const refreshPlatformBreakdown = useCallback(async (accountItems, rangeStart, rangeEnd) => {
     const breakdownPayload = await Promise.all(
       accountItems.map(async (account) => ({
         account,
-        posts: await analyticsApi.posts(account.id || account.account_id)
+        posts: await analyticsApi.posts(account.id || account.account_id, {
+          from: toDateOnly(rangeStart),
+          to: toDateOnly(rangeEnd),
+          limit: 200
+        })
       }))
     );
 
@@ -87,10 +142,7 @@ export default function AnalyticsPage() {
       breakdownPayload.map(({ account, posts: accountPosts }) => ({
         name: account.platform?.name || account.account_name,
         slug: account.platform?.slug || "instagram",
-        value: (Array.isArray(accountPosts) ? accountPosts : accountPosts?.data || accountPosts?.items || []).reduce(
-          (sum, post) => sum + Number(post.analytics?.reach_count || 0),
-          0
-        )
+        value: toArray(accountPosts).reduce((sum, post) => sum + Number(post.analytics?.reach_count || 0), 0)
       }))
     );
   }, []);
@@ -100,42 +152,49 @@ export default function AnalyticsPage() {
       return;
     }
 
-    const rangeStart = startFromPreset(rangePreset, customStart);
-    const rangeEnd = rangePreset === "custom" ? customEnd : new Date();
-    const [dailyPayload, followerPayload, bestTimePayload, postPayload] = await Promise.all([
+    const { rangeStart, rangeEnd } = getActiveRange();
+    const { previousStart, previousEnd } = previousRange(rangeStart, rangeEnd);
+
+    const [
+      dailyPayload,
+      previousDailyPayload,
+      followerPayload,
+      bestTimePayload,
+      postPayload,
+      previousPostPayload
+    ] = await Promise.all([
       analyticsApi.daily(selectedAccountId, {
         startDate: toDateOnly(rangeStart),
         endDate: toDateOnly(rangeEnd)
       }),
-      analyticsApi.followers(selectedAccountId),
+      analyticsApi.daily(selectedAccountId, {
+        startDate: toDateOnly(previousStart),
+        endDate: toDateOnly(previousEnd)
+      }),
+      analyticsApi.followers(selectedAccountId, {
+        startDate: toDateOnly(rangeStart),
+        endDate: toDateOnly(rangeEnd)
+      }),
       analyticsApi.bestTimes(selectedAccountId),
-      analyticsApi.posts(selectedAccountId)
+      analyticsApi.posts(selectedAccountId, {
+        from: toDateOnly(rangeStart),
+        to: toDateOnly(rangeEnd),
+        limit: 200
+      }),
+      analyticsApi.posts(selectedAccountId, {
+        from: toDateOnly(previousStart),
+        to: toDateOnly(previousEnd),
+        limit: 200
+      })
     ]);
 
-    const dailyItems = Array.isArray(dailyPayload) ? dailyPayload : dailyPayload?.data || dailyPayload?.items || [];
-    const followerItems = Array.isArray(followerPayload) ? followerPayload : followerPayload?.data || followerPayload?.items || [];
-    const bestTimeItems = bestTimePayload?.slots || (Array.isArray(bestTimePayload) ? bestTimePayload : []);
-    const postItems = Array.isArray(postPayload) ? postPayload : postPayload?.data || postPayload?.items || [];
-
-    setDaily(dailyItems);
-    setFollowers(
-      followerItems.filter((item) => {
-        const captured = new Date(item.captured_at);
-        return captured >= rangeStart && captured <= rangeEnd;
-      })
-    );
-    setBestTimes(bestTimeItems);
-    setPosts(
-      postItems.filter((post) => {
-        if (!post.analytics?.collected_at) {
-          return false;
-        }
-
-        const collected = new Date(post.analytics.collected_at);
-        return collected >= rangeStart && collected <= rangeEnd;
-      })
-    );
-  }, [customEnd, customStart, rangePreset, selectedAccountId]);
+    setDaily(toArray(dailyPayload));
+    setComparisonDaily(toArray(previousDailyPayload));
+    setFollowers(toArray(followerPayload));
+    setBestTimes(bestTimePayload?.slots || toArray(bestTimePayload));
+    setPosts(toArray(postPayload));
+    setComparisonPosts(toArray(previousPostPayload));
+  }, [getActiveRange, selectedAccountId]);
 
   useEffect(() => {
     document.title = "Analytics | Smart Social";
@@ -144,26 +203,28 @@ export default function AnalyticsPage() {
   useSocketEvent(
     EVENTS.POST_PUBLISHED,
     useCallback(() => {
+      const { rangeStart, rangeEnd } = getActiveRange();
       refreshSelectedAccountAnalytics().catch(() => {});
-      refreshPlatformBreakdown(accounts).catch(() => {});
-    }, [accounts, refreshPlatformBreakdown, refreshSelectedAccountAnalytics])
+      refreshPlatformBreakdown(accounts, rangeStart, rangeEnd).catch(() => {});
+    }, [accounts, getActiveRange, refreshPlatformBreakdown, refreshSelectedAccountAnalytics])
   );
 
   useEffect(() => {
     accountsApi
       .list()
       .then(async (payload) => {
-        const accountItems = payload?.items || payload?.data || (Array.isArray(payload) ? payload : []);
+        const accountItems = toArray(payload);
         setAccounts(accountItems);
         const remembered = localStorage.getItem(ACCOUNT_KEY);
         const fallback = remembered || String(accountItems[0]?.id || accountItems[0]?.account_id || "");
         setSelectedAccountId(fallback);
-        await refreshPlatformBreakdown(accountItems);
+        const { rangeStart, rangeEnd } = getActiveRange();
+        await refreshPlatformBreakdown(accountItems, rangeStart, rangeEnd);
       })
       .catch(() => {
         toast.error("Unable to load accounts.");
       });
-  }, [refreshPlatformBreakdown]);
+  }, [getActiveRange, refreshPlatformBreakdown]);
 
   useEffect(() => {
     if (!selectedAccountId) {
@@ -180,32 +241,38 @@ export default function AnalyticsPage() {
       .finally(() => {
         setLoading(false);
       });
-  }, [selectedAccountId, rangePreset, customStart, customEnd, refreshSelectedAccountAnalytics]);
+  }, [customEnd, customStart, rangePreset, refreshSelectedAccountAnalytics, selectedAccountId]);
+
+  useEffect(() => {
+    if (!accounts.length) {
+      return;
+    }
+
+    const { rangeStart, rangeEnd } = getActiveRange();
+    refreshPlatformBreakdown(accounts, rangeStart, rangeEnd).catch(() => {});
+  }, [accounts, customEnd, customStart, getActiveRange, rangePreset, refreshPlatformBreakdown, selectedAccountId]);
 
   const stats = useMemo(() => {
-    const midpoint = Math.max(1, Math.floor(daily.length / 2));
-    const currentDaily = daily.slice(-midpoint);
-    const previousDaily = daily.slice(0, Math.max(0, daily.length - midpoint));
-
-    const currentPosts = posts.slice(-midpoint);
-    const previousPosts = posts.slice(0, Math.max(0, posts.length - midpoint));
-
-    const totalReach = sumBy(currentDaily, "reach_count");
-    const previousReach = sumBy(previousDaily, "reach_count");
-    const totalImpressions = sumBy(currentDaily, "impressions");
-    const previousImpressions = sumBy(previousDaily, "impressions");
-    const totalLikes = currentPosts.reduce((sum, post) => sum + Number(post.analytics?.likes_count || 0), 0);
-    const previousLikes = previousPosts.reduce((sum, post) => sum + Number(post.analytics?.likes_count || 0), 0);
-    const totalComments = currentPosts.reduce((sum, post) => sum + Number(post.analytics?.comments_count || 0), 0);
-    const previousComments = previousPosts.reduce((sum, post) => sum + Number(post.analytics?.comments_count || 0), 0);
-    const totalShares = currentPosts.reduce((sum, post) => sum + Number(post.analytics?.shares_count || 0), 0);
-    const previousShares = previousPosts.reduce((sum, post) => sum + Number(post.analytics?.shares_count || 0), 0);
-    const averageEngagementRate = currentPosts.length
-      ? currentPosts.reduce((sum, post) => sum + Number(post.analytics?.engagement_rate || 0), 0) / currentPosts.length
-      : 0;
-    const previousEngagementRate = previousPosts.length
-      ? previousPosts.reduce((sum, post) => sum + Number(post.analytics?.engagement_rate || 0), 0) / previousPosts.length
-      : 0;
+    const totalReach = daily.reduce((sum, item) => sum + metricValue(item, "reach_count", "total_reach", "reach"), 0);
+    const previousReach = comparisonDaily.reduce((sum, item) => sum + metricValue(item, "reach_count", "total_reach", "reach"), 0);
+    const totalImpressions = daily.reduce((sum, item) => sum + metricValue(item, "impressions", "total_impressions"), 0);
+    const previousImpressions = comparisonDaily.reduce((sum, item) => sum + metricValue(item, "impressions", "total_impressions"), 0);
+    const totalLikes = daily.reduce((sum, item) => sum + metricValue(item, "likes", "total_likes"), 0);
+    const previousLikes = comparisonDaily.reduce((sum, item) => sum + metricValue(item, "likes", "total_likes"), 0);
+    const totalComments = daily.reduce((sum, item) => sum + metricValue(item, "comments", "total_comments"), 0);
+    const previousComments = comparisonDaily.reduce((sum, item) => sum + metricValue(item, "comments", "total_comments"), 0);
+    const totalShares = daily.reduce((sum, item) => sum + metricValue(item, "shares", "total_shares"), 0);
+    const previousShares = comparisonDaily.reduce((sum, item) => sum + metricValue(item, "shares", "total_shares"), 0);
+    const averageEngagementRate = daily.length
+      ? daily.reduce((sum, item) => sum + metricValue(item, "engagement_rate", "avg_engagement_rate"), 0) / daily.length
+      : posts.length
+        ? posts.reduce((sum, post) => sum + Number(post.analytics?.engagement_rate || 0), 0) / posts.length
+        : 0;
+    const previousEngagementRate = comparisonDaily.length
+      ? comparisonDaily.reduce((sum, item) => sum + metricValue(item, "engagement_rate", "avg_engagement_rate"), 0) / comparisonDaily.length
+      : comparisonPosts.length
+        ? comparisonPosts.reduce((sum, post) => sum + Number(post.analytics?.engagement_rate || 0), 0) / comparisonPosts.length
+        : 0;
 
     return [
       { title: "Total Reach", value: totalReach.toLocaleString(), change: percentageChange(totalReach, previousReach), color: "orange" },
@@ -215,38 +282,36 @@ export default function AnalyticsPage() {
       { title: "Total Shares", value: totalShares.toLocaleString(), change: percentageChange(totalShares, previousShares), color: "orange" },
       { title: "Avg Engagement Rate", value: `${averageEngagementRate.toFixed(2)}%`, change: percentageChange(averageEngagementRate, previousEngagementRate), color: "purple" }
     ];
-  }, [daily, posts]);
+  }, [comparisonDaily, comparisonPosts, daily, posts]);
 
   const engagementOverTime = useMemo(() => {
-    const grouped = new Map();
-
-    posts.forEach((post) => {
-      const key = formatDayKey(new Date(post.analytics.collected_at), user?.timezone);
-      const bucket = grouped.get(key) || { day: key, likes: 0, comments: 0, shares: 0, reach: 0 };
-      bucket.likes += Number(post.analytics?.likes_count || 0);
-      bucket.comments += Number(post.analytics?.comments_count || 0);
-      bucket.shares += Number(post.analytics?.shares_count || 0);
-      bucket.reach += Number(post.analytics?.reach_count || 0);
-      grouped.set(key, bucket);
-    });
-
-    return [...grouped.values()];
-  }, [posts, user?.timezone]);
+    return daily.map((item) => ({
+      day: formatDayKey(new Date(item.analytics_date || item.stat_date), user?.timezone),
+      likes: metricValue(item, "likes", "total_likes"),
+      comments: metricValue(item, "comments", "total_comments"),
+      shares: metricValue(item, "shares", "total_shares"),
+      reach: metricValue(item, "reach_count", "total_reach", "reach")
+    }));
+  }, [daily, user?.timezone]);
 
   const heatmapCells = useMemo(() => {
+    const slotsByDay = bestTimes.reduce((acc, item) => {
+      const key = item.day_of_week;
+      acc[key] = acc[key] || [];
+      acc[key].push(item);
+      return acc;
+    }, {});
+
     return Array.from({ length: 7 }, (_, rowIndex) => {
       const weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
       const day = weekdays[rowIndex];
-      const record = bestTimes.find((item) => item.day_of_week === day);
+      const records = slotsByDay[day] || [];
 
       return {
         day,
         values: Array.from({ length: 24 }, (_, hour) => {
-          if (!record || record.best_hour !== hour) {
-            return 0;
-          }
-
-          return record.engagement_score;
+          const slot = records.find((item) => Number(item.best_hour) === hour);
+          return slot ? Number(slot.engagement_score || 0) : 0;
         })
       };
     });
@@ -368,10 +433,8 @@ export default function AnalyticsPage() {
                   </div>
                 ))}
                 {heatmapCells.map((row) => (
-                  <>
-                    <div key={`${row.day}-label`} className="pr-2 text-sm font-medium text-slate-500">
-                      {row.day.slice(0, 3)}
-                    </div>
+                  <Fragment key={row.day}>
+                    <div className="pr-2 text-sm font-medium text-slate-500">{row.day.slice(0, 3)}</div>
                     {row.values.map((value, hour) => (
                       <div
                         key={`${row.day}-${hour}`}
@@ -384,7 +447,7 @@ export default function AnalyticsPage() {
                         title={`${row.day} ${hour}:00`}
                       />
                     ))}
-                  </>
+                  </Fragment>
                 ))}
               </div>
             </PageCard>

@@ -40,7 +40,7 @@ export const schedulesApi = {
 
 export const analyticsApi = {
   dashboard: () => api.get("/analytics/dashboard").then(unwrap),
-  posts: (accountId) => api.get(`/analytics/posts/${accountId}`).then(unwrap),
+  posts: (accountId, params = {}) => api.get(`/analytics/posts/${accountId}`, { params }).then(unwrap),
   daily: (accountId, params = {}) => api.get(`/analytics/daily/${accountId}`, { params }).then(unwrap),
   followers: (accountId, params = {}) => api.get(`/analytics/followers/${accountId}`, { params }).then(unwrap),
   bestTimes: (accountId) => api.get(`/analytics/best-times/${accountId}`).then(unwrap)

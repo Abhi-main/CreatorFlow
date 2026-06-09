@@ -160,15 +160,36 @@ export const postAnalytics = asyncController(async (req, res) => {
 
 export const daily = asyncController(async (req, res) => {
   if (!(await verifyAccount(req.params.accountId, req.user.team_id))) return fail(res, "Account not found", 404);
-  const days = parseInt(req.query.days, 10) || 30;
+  const clauses = ["account_id = ?"];
+  const params = [req.params.accountId];
+  const startDate = req.query.startDate || req.query.from || null;
+  const endDate = req.query.endDate || req.query.to || null;
+
+  if (startDate) {
+    clauses.push("stat_date >= ?");
+    params.push(startDate);
+  }
+
+  if (endDate) {
+    clauses.push("stat_date <= ?");
+    params.push(endDate);
+  }
+
+  if (!startDate && !endDate) {
+    const days = parseInt(req.query.days, 10) || 30;
+    clauses.push("stat_date >= DATE_SUB(UTC_DATE(), INTERVAL ? DAY)");
+    params.push(days);
+  }
+
   const [rows] = await pool.query(
     `SELECT *, stat_date AS analytics_date, total_likes AS likes, total_comments AS comments,
             total_shares AS shares, total_reach AS reach_count, total_impressions AS impressions,
+            avg_engagement_rate AS engagement_rate,
             (total_likes + total_comments + total_shares) AS engagement_count
        FROM DailyAnalytics
-      WHERE account_id = ? AND stat_date >= DATE_SUB(UTC_DATE(), INTERVAL ? DAY)
+      WHERE ${clauses.join(" AND ")}
       ORDER BY stat_date ASC`,
-    [req.params.accountId, days]
+    params
   );
   return ok(res, rows, "Daily analytics fetched");
 });
@@ -182,10 +203,33 @@ export const weekly = asyncController(async (req, res) => {
 
 export const followers = asyncController(async (req, res) => {
   if (!(await verifyAccount(req.params.accountId, req.user.team_id))) return fail(res, "Account not found", 404);
-  const days = parseInt(req.query.days, 10) || 30;
+  const clauses = ["account_id = ?"];
+  const params = [req.params.accountId];
+  const startDate = req.query.startDate || req.query.from || null;
+  const endDate = req.query.endDate || req.query.to || null;
+
+  if (startDate) {
+    clauses.push("recorded_date >= ?");
+    params.push(startDate);
+  }
+
+  if (endDate) {
+    clauses.push("recorded_date <= ?");
+    params.push(endDate);
+  }
+
+  if (!startDate && !endDate) {
+    const days = parseInt(req.query.days, 10) || 30;
+    clauses.push("recorded_date >= DATE_SUB(UTC_DATE(), INTERVAL ? DAY)");
+    params.push(days);
+  }
+
   const [rows] = await pool.query(
-    "SELECT *, recorded_date AS metric_date, recorded_date AS captured_at FROM FollowersHistory WHERE account_id = ? AND recorded_date >= DATE_SUB(UTC_DATE(), INTERVAL ? DAY) ORDER BY recorded_date ASC",
-    [req.params.accountId, days]
+    `SELECT *, recorded_date AS metric_date, recorded_date AS captured_at
+       FROM FollowersHistory
+      WHERE ${clauses.join(" AND ")}
+      ORDER BY recorded_date ASC`,
+    params
   );
   return ok(res, rows, "Follower history fetched");
 });
