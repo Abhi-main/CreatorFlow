@@ -1,5 +1,5 @@
 import pool from "../config/db.js";
-import { asyncController, fail, ok, normalizeUtcDateTime } from "./_helpers.js";
+import { asyncController, fail, ok, normalizeScheduledDateTime } from "./_helpers.js";
 
 function nextRunAt({ recurrence_type, time_of_day }) {
   const [hour, minute] = String(time_of_day || "09:00").split(":").map(Number);
@@ -12,8 +12,9 @@ function nextRunAt({ recurrence_type, time_of_day }) {
 }
 
 export const createSchedule = asyncController(async (req, res) => {
-  const { post_id, scheduled_at, timezone = "UTC" } = req.body;
-  const normalizedScheduledAt = normalizeUtcDateTime(scheduled_at);
+  const timezone = req.body.timezone || req.user?.timezone || "Asia/Kolkata";
+  const { post_id, scheduled_at } = req.body;
+  const normalizedScheduledAt = normalizeScheduledDateTime(scheduled_at, timezone);
   const [[post]] = await pool.query("SELECT post_id FROM Posts WHERE post_id = ? AND team_id = ? LIMIT 1", [post_id, req.user.team_id]);
   if (!post) return fail(res, "Post not found", 404);
   await pool.query("INSERT INTO ScheduledPosts (post_id, scheduled_at, timezone, status, created_at) VALUES (?, ?, ?, 'scheduled', UTC_TIMESTAMP())", [post_id, normalizedScheduledAt, timezone]);

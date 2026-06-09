@@ -457,13 +457,26 @@ GROUP BY c.campaign_id, c.team_id, c.campaign_name, c.status;
 DROP PROCEDURE IF EXISTS sp_GetDuePosts;
 CREATE PROCEDURE sp_GetDuePosts()
 BEGIN
-  SELECT p.*, sa.platform_id
-  FROM Posts p
+  SELECT
+    sp.scheduled_id AS schedule_id,
+    sp.post_id,
+    p.account_id,
+    p.caption,
+    p.post_type,
+    p.team_id,
+    p.created_by,
+    sa.access_token,
+    sa.account_handle,
+    sa.platform_id,
+    sp.scheduled_at,
+    sp.timezone
+  FROM ScheduledPosts sp
+  JOIN Posts p ON p.post_id = sp.post_id
   JOIN SocialAccounts sa ON sa.account_id = p.account_id
-  JOIN ScheduledPosts sp ON sp.post_id = p.post_id
   WHERE p.status = 'scheduled'
     AND sp.status = 'scheduled'
-    AND sp.scheduled_at <= UTC_TIMESTAMP();
+    AND sp.publish_attempts < 3
+    AND CONVERT_TZ(sp.scheduled_at, IFNULL(sp.timezone, 'UTC'), 'UTC') <= UTC_TIMESTAMP();
 END;
 
 DROP PROCEDURE IF EXISTS sp_MarkPostPublished;

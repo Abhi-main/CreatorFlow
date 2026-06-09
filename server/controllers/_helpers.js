@@ -74,6 +74,60 @@ export const normalizeUtcDateTime = (value) => {
   ].join("-") + ` ${pad(parsed.getUTCHours())}:${pad(parsed.getUTCMinutes())}:${pad(parsed.getUTCSeconds())}`;
 };
 
+const formatSqlPartsInTimeZone = (date, timeZone = "UTC") => {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23"
+  });
+
+  const parts = formatter.formatToParts(date).reduce((acc, part) => {
+    if (part.type !== "literal") {
+      acc[part.type] = part.value;
+    }
+    return acc;
+  }, {});
+
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+};
+
+export const normalizeScheduledDateTime = (value, timeZone = "UTC") => {
+  if (value === undefined || value === null || value === "") return null;
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(raw)) {
+    return raw;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(raw)) {
+    return `${raw}:00`;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(raw)) {
+    return raw.replace("T", " ") + ":00";
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(raw)) {
+    return raw.replace("T", " ");
+  }
+
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) {
+    const err = new Error("Invalid datetime value");
+    err.status = 400;
+    throw err;
+  }
+
+  return formatSqlPartsInTimeZone(parsed, timeZone || "UTC");
+};
+
 export const requireTeam = async (teamId, user) => {
   if (!teamId || Number(teamId) !== Number(user.team_id)) {
     const err = new Error("Team access denied");

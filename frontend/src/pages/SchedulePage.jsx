@@ -80,6 +80,32 @@ function nextScheduledDate(dayOfWeek, hour) {
   return next;
 }
 
+function formatDateTimeForTimezone(date, timeZone) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23"
+  });
+
+  const parts = formatter.formatToParts(date).reduce((acc, part) => {
+    if (part.type !== "literal") {
+      acc[part.type] = part.value;
+    }
+    return acc;
+  }, {});
+
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+}
+
 function formatCaptionWithHashtags(caption) {
   if (!caption) return null;
 
@@ -262,6 +288,10 @@ export default function SchedulePage() {
   const [searchParams] = useSearchParams();
   const inputRef = useRef(null);
   const typingTimeoutRef = useRef(null);
+  const userTimezone = useMemo(
+    () => normalizeTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone || user?.timezone || "Asia/Kolkata"),
+    [user?.timezone]
+  );
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [aiOpen, setAiOpen] = useState(true);
@@ -281,7 +311,7 @@ export default function SchedulePage() {
     caption: "",
     publishMode: "Schedule for Later",
     scheduledAt: new Date(Date.now() + 60 * 60 * 1000),
-    timezone: normalizeTimeZone(user?.timezone) || "Asia/Kolkata",
+    timezone: userTimezone,
     recurrenceType: "Weekly",
     recurrenceDays: ["Mon", "Wed", "Fri"],
     dayOfMonth: 1,
@@ -308,6 +338,14 @@ export default function SchedulePage() {
       window.clearTimeout(typingTimeoutRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    setForm((current) => (
+      current.timezone
+        ? current
+        : { ...current, timezone: userTimezone }
+    ));
+  }, [userTimezone]);
 
   useEffect(() => {
     Promise.all([
@@ -537,12 +575,18 @@ export default function SchedulePage() {
     setSubmitting(true);
 
     try {
+      const effectiveTimezone = form.timezone || userTimezone || "Asia/Kolkata";
+      const scheduledForValue =
+        submitMode === "schedule" || submitMode === "recurring"
+          ? formatDateTimeForTimezone(form.scheduledAt, effectiveTimezone)
+          : null;
+
       const postPayload = {
         title: `${form.postType} post`,
         caption: previewCaption,
         social_account_id: form.accountId,
         campaign_id: form.campaignId || null,
-        timezone: form.timezone,
+        timezone: effectiveTimezone,
         media_ids: uploadedMedia.map((item) => item.media_id).filter(Boolean),
         post_type: form.postType.toLowerCase()
       };
@@ -560,7 +604,7 @@ export default function SchedulePage() {
         createdPost = await postsApi.create({
           ...postPayload,
           publish_status: "scheduled",
-          scheduled_for: form.scheduledAt.toISOString()
+          scheduled_for: scheduledForValue
         });
         toast.success("Post scheduled.");
       } else if (submitMode === "publish") {
@@ -596,7 +640,7 @@ export default function SchedulePage() {
               day_of_week: dayOfWeek,
               day_of_month: form.recurrenceType === "Monthly" ? form.dayOfMonth : null,
               hour_of_day: form.scheduledAt.getHours(),
-              timezone: form.timezone
+              timezone: effectiveTimezone
             })
           )
         );
@@ -804,22 +848,27 @@ export default function SchedulePage() {
               </div>
 
               {form.publishMode !== "Publish Now" ? (
-                <div className="grid gap-4 md:grid-cols-2">
-                  <DatePicker
-                    selected={form.scheduledAt}
-                    onChange={(value) => setForm((current) => ({ ...current, scheduledAt: value || new Date() }))}
-                    showTimeSelect
-                    dateFormat="MMM d, yyyy h:mm aa"
-                    className="app-input"
-                  />
-                  <select className="app-input" value={form.timezone} onChange={(event) => setForm((current) => ({ ...current, timezone: event.target.value }))}>
-                    {timezones.map((timezone) => (
-                      <option key={timezone} value={timezone}>
-                        {timezone}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <DatePicker
+                      selected={form.scheduledAt}
+                      onChange={(value) => setForm((current) => ({ ...current, scheduledAt: value || new Date() }))}
+                      showTimeSelect
+                      dateFormat="MMM d, yyyy h:mm aa"
+                      className="app-input"
+                    />
+                    <select className="app-input" value={form.timezone} onChange={(event) => setForm((current) => ({ ...current, timezone: event.target.value }))}>
+                      {timezones.map((timezone) => (
+                        <option key={timezone} value={timezone}>
+                          {timezone}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Timezone: {form.timezone || userTimezone}
+                  </p>
+                </>
               ) : null}
 
               {form.publishMode === "Schedule for Later" ? (
